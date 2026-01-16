@@ -1,7 +1,7 @@
 # OS Policy Simulators (Virtual Memory + Scheduling)
 
 This repo contains simulators exploring operating system policies:
-- Virtual memory page replacement (FIFO, LRU, CLOCK, RAND)
+- Virtual memory page replacement (FIFO, LRU, CLOCK, CLEAN-CLOCK, RAND)
 - Thread scheduling (planned)
 - Interactive driver to run experiments (planned)
 
@@ -16,18 +16,27 @@ refactored and extended to improve correctness, performance, structure,
 and reproducibility. The repository is being expanded to include a thread
 scheduling simulator and a unified driver for interactive experimentation.
 
-## Build
+## Build and run
 
 ```bash
 make memsim
-./build/memsim <tracefile> <frames> <rand|fifo|lru|clock> <quiet|debug> [seed]
+./build/memsim <tracefile> <frames> <rand|fifo|lru|clock|clean-clock> <quiet|debug> [seed]
 ```
-Example:
+Example run:
 
-```bash
-make memsim
-./build/memsim memsim/traces/gcc.trace 64 lru quiet
+``` bash
+# From the repository root
+./build/memsim ./memsim/traces/gcc.trace 50 clock quiet
+total memory frames:                 50
+events in trace:                1000000
+total disk reads:                 70204
+total disk writes:                10495
+page fault rate (%):             7.0204
+seed:                                 1
 ```
+
+
+
 ## Documentation
 
 Detailed design notes and implementation commentary for the virtual memory
@@ -37,7 +46,7 @@ simulator are available here:
 
 This includes:
 - Data structure design (`page_table`, `frame_entry`)
-- Page replacement algorithms (LRU, FIFO, CLOCK, Clean-CLOCK, RAND)
+- Page replacement algorithms (LRU, FIFO, CLOCK, CLEAN-CLOCK, RAND)
 - Detailed execution flow and implementation rationale
 
 

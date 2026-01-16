@@ -29,7 +29,7 @@ int createMMU(int frames) {
     return -1;
   }
 
-  for (int i = 0; i < NUM_PAGES; i++) {
+  for (int i = 0; i < (int)NUM_PAGES; i++) {
     page_table[i] = -1;
   }
   for (int f = 0; f < frames; f++) {
@@ -302,12 +302,14 @@ int main(int argc, char *argv[]) {
     memory_access = fscanf(trace, "%x %c", &address, &rw);
   }
 
-  printf("total memory frames:  %d\n", frames);
-  printf("events in trace:      %d\n", no_events);
-  printf("total disk reads:     %d\n", page_faults);
-  printf("total disk writes:    %d\n", disk_writes);
-  printf("page fault rate:      %.4f\n", (float)page_faults / no_events);
-  printf("seed:                %u\n", seed);
+  double page_fault_percent = (double)page_faults / no_events * 100.0;
+
+  printf("%-28s %10d\n", "total memory frames:", frames);
+  printf("%-28s %10d\n", "events in trace:", no_events);
+  printf("%-28s %10d\n", "total disk reads:", page_faults);
+  printf("%-28s %10d\n", "total disk writes:", disk_writes);
+  printf("%-28s %10.4f\n", "page fault rate (%):", page_fault_percent);
+  printf("%-28s %10u\n", "seed:", seed);
 
   free(page_table);
   free(frame_data);
