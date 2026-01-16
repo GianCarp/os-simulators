@@ -1,0 +1,17 @@
+# build outputs
+build/
+*.o
+*.a
+*.so
+*.dSYM
+*.out
+
+# executables 
+memsim/memsim
+schedsim/schedsim
+driver/driver
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
