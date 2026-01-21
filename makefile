@@ -21,10 +21,9 @@ $(MEMSIM): memsim/memsim.c memsim/memsim.h | $(BUILD)
 
 schedsim: $(SCHEDSIM)
 
-# placeholder until schedsim exists
-$(SCHEDSIM): | $(BUILD)
-	@echo "schedsim not implemented yet"
-
+schedsim: $(SCHEDSIM)
+$(SCHEDSIM): schedsim/schedsim.c schedsim/schedsim.h | $(BUILD)
+	$(CC) $(CFLAGS) schedsim/schedsim.c -o $(SCHEDSIM) $(LDFLAGS)
 driver: $(DRIVER)
 
 # placeholder until driver exists
