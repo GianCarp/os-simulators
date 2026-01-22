@@ -196,7 +196,7 @@ int main(int argc, char *argv[]) {
   if (argc < 5) {
     printf("Usage: ./memsim inputfile numberframes replacementmode debugmode "
            "[seed]\n");
-    return -1;
+    return EXIT_FAILURE;
   }
 
   // Argument parsing begins
@@ -204,13 +204,13 @@ int main(int argc, char *argv[]) {
   trace = fopen(tracename, "r");
   if (trace == NULL) {
     printf("Cannot open trace file %s\n", tracename);
-    return -1;
+    return EXIT_FAILURE;
   }
 
   int frames = atoi(argv[2]);
   if (frames < 1) {
     printf("Frame number must be at least 1\n");
-    return -1;
+    return EXIT_FAILURE;
   }
 
   if (strcmp(argv[3], "lru") == 0) {
@@ -315,5 +315,5 @@ int main(int argc, char *argv[]) {
   free(frame_data);
   fclose(trace);
 
-  return 0;
+  return EXIT_SUCCESS;
 }

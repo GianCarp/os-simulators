@@ -7,6 +7,27 @@
 make memsim
 ./build/memsim <tracefile> <frames> <rand|fifo|lru|clock> <quiet|debug> [seed]
 ```
+Where:
+
+- **tracefile**: file containing the memory access, of form `<address> <R|W>`
+- **frames**: the number of physical frames available 
+- **policy**: page replacement policy one of LRU, FIFO, clock, clock-clean, and rand
+- **debug mode**: 'quiet' for summary only 'debug' for every event
+- **seed**: optional seed for the random replacement policy
+
+Example run:
+
+``` bash
+# From the repository root
+./build/memsim ./memsim/traces/gcc.trace 50 clock quiet
+total memory frames:                 50
+events in trace:                1000000
+total disk reads:                 70204
+total disk writes:                10495
+page fault rate (%):             7.0204
+seed:                                 1
+```
+
 
 ## implementation notes
 
@@ -335,18 +356,10 @@ where `pfn` is passed in the argument as `*new_frame`
 
 **1. Argument parsing**
 
-`main()` expects the following command line arguments:
+`main()` expects the command line arguments as shown in the example below, and detailed at the top of this README.
 
 `./memsim <tracefile> <frames> <policy> <quiet|debug> [seed]
 `
-where:
-
-- **tracefile**: file containing the memory access, of form `<address> <R|W>`
-- **frames**: the number of physical frames available 
-- **policy**: page replacement policy one of LRU, FIFO, clock, clock-clean, and rand
-- **debug mode**: 'quiet' for summary only 'debug' for every event
-- **seed**: optional seed for the random replacement policy
-
 
 **2. Simulator initialisation**
 
