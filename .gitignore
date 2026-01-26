@@ -15,3 +15,9 @@ driver/driver
 .DS_Store
 .vscode/
 .idea/
+# build artifacts
+build/
+
+# editor / tooling
+compile_commands.json
+.cache/
