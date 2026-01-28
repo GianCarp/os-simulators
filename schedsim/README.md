@@ -370,7 +370,7 @@ Each iteration of the Round robin loop models one scheduling decision and procee
     
 2. **Admit newly arrived jobs (first-time enqueue)**  
     Enqueue all jobs whose `arrival_time <= current_time`.  
-    This uses the `next_arrival` index, which monotonically increases and ensures that **each job is admitted to the system exactly once** when it first arrives.
+    This uses the `next_arrival` index, which monotonically increases and ensures that each job is admitted to the system exactly once when it first arrives.
     
 3. **Select and run the next ready job**  
     Pop the job index at the head of the ready queue.
@@ -381,12 +381,12 @@ Each iteration of the Round robin loop models one scheduling decision and procee
         
 4. **Admit jobs that arrived during the time slice**  
     After advancing time, enqueue any additional jobs whose arrival time falls within the executed time slice.  
-    Again, `next_arrival` guarantees these are **new jobs**, not ones that have already run.
+    Again, `next_arrival` guarantees these are new jobs, not ones that have already run.
     
 5. **Completion or re-queue**
     
     - If the job has completed (`remaining_time == 0`), record its `finish_time`.
-    - Otherwise, **re-enqueue the same job index at the tail of the ready queue**, preserving FIFO order for Round robin rotation.
+    - Otherwise, re-enqueue the same job index at the tail of the ready queue, preserving FIFO order for Round robin rotation.
 
 
 **Invariants**

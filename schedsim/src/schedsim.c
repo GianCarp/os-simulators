@@ -15,9 +15,13 @@ static void usage(const char *prog) {
           "  %s <inputfile> --policies P1,P2[,P3...] [--time-slice N]\n"
           "\n"
           "Policies: FCFS, SJF, RR\n"
-          "Note: if RR or all is selected, you must provide --time-slice N\n",
+          "\n"
+          "Options:\n"
+          "  --time-slice N   Required when RR is selected\n"
+          "  -h               Show this help message\n",
           prog, prog, prog);
 }
+
 static const char *policy_name(enum sched_policy policy) {
   switch (policy) {
   case FCFS:
@@ -296,6 +300,11 @@ int main(int argc, char *argv[]) {
   // BEGIN PARSING ARGUMENTS
   //
 
+  if (argc >= 2 && (strcmp(argv[1], "-h") == 0)) {
+    usage(argv[0]);
+    return 0;
+  }
+
   if (argc < 3 || argc > 6) {
     usage(argv[0]);
     return EXIT_FAILURE;
@@ -360,6 +369,7 @@ int main(int argc, char *argv[]) {
       time_slice = atoi(argv[5]);
       if (time_slice <= 0) {
         fprintf(stderr, "--time-slice must be > 0\n");
+        usage(argv[0]);
         return EXIT_FAILURE;
       }
     } else {

@@ -19,6 +19,23 @@ static int clock_hand = 0; // hand position for clock algorithm
 static int fifo_hand = 0;  // hand position for FIFO algorithm
 static int next_frame = 0; // next free frame to allocate (sequential)
 
+static void usage(const char *prog) {
+  fprintf(stderr,
+          "Usage:\n"
+          "  %s <tracefile> <num_frames> <policy> <quiet|debug>\n"
+          "\n"
+          "Policies:\n"
+          "  fifo | lru | clock | rand | clean-clock\n"
+          "\n"
+          "Mode:\n"
+          "  quiet      Suppress per-access output\n"
+          "  debug      Print per-access trace\n"
+          "\n"
+          "Options:\n"
+          "  -h         Show this help message\n",
+          prog);
+}
+
 int createMMU(int frames) {
   numFrames = frames;
 
@@ -193,13 +210,18 @@ int main(int argc, char *argv[]) {
   FILE *trace;
   unsigned seed = 1;
 
-  if (argc < 5) {
-    printf("Usage: ./memsim inputfile numberframes replacementmode debugmode "
-           "[seed]\n");
+  // Argument parsing begins
+
+  if (argc >= 2 && strcmp(argv[1], "-h") == 0) {
+    usage(argv[0]);
+    return EXIT_SUCCESS;
+  }
+
+  if (argc < 5 || argc > 6) {
+    usage(argv[0]);
     return EXIT_FAILURE;
   }
 
-  // Argument parsing begins
   tracename = argv[1];
   trace = fopen(tracename, "r");
   if (trace == NULL) {
