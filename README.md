@@ -1,52 +1,137 @@
-# OS Policy Simulators (Virtual Memory + Scheduling)
+# OS Simulators
 
-This repo contains simulators exploring operating system policies:
-- Virtual memory page replacement (FIFO, LRU, CLOCK, CLEAN-CLOCK, RAND)
-- Thread scheduling (planned)
-- Interactive driver to run experiments (planned)
+This repository contains a collection of small, focused simulators for exploring
+core operating system policies in controlled environments. Each simulator
+isolates a specific OS mechanism (e.g. CPU scheduling, virtual memory replacement)
+and exposes its behaviour through reproducible workloads and detailed metrics.
 
-## Background
+The goal of the project is not to emulate a full operating system, but to make
+individual policy decisions explicit, observable, and comparable, while keeping
+implementations simple enough to reason about and extend.
 
-The virtual memory simulator began as part of an Operating Systems course
-assignment, where LRU, CLOCK, and RAND page replacement policies were
-implemented and analysed using real memory traces. FIFO and clean-clock added later as an extension.
+## Project layout
 
-After completing the assignment, the simulator was
-refactored and extended to improve correctness, performance, structure,
-and reproducibility. The repository is being expanded to include a thread
-scheduling simulator and a unified driver for interactive experimentation.
+```
+os-simulators/
+├── memsim/ # Virtual memory page replacement simulator
+├── schedsim/ # Single-core CPU scheduling simulator
+├── tools/ # Supporting tools (e.g. workload generators)
+├── build/ # Build outputs (ignored by git)
+├── makefile # Top-level build orchestration
+└── README.md # This file
+```
 
-## Build and run
+Each subdirectory contains its own README with detailed design notes and usage instructions.
+
+## Components
+
+### `memsim/` — Virtual Memory Simulator
+
+`memsim` simulates page replacement policies using real memory traces. It is
+designed to explore how different page replacement strategies behave under realistic
+access patterns.
+
+Supported policies include:
+
+- FIFO
+- LRU
+- CLOCK
+- CLEAN-CLOCK
+- Random
+
+The simulator reports page fault rates, disk reads, and disk writes, and supports
+deterministic replay via a fixed RNG seed.
+
+See [`memsim/README.md`](memsim/README.md) for full details.
+
+---
+
+### `schedsim/` — CPU Scheduling Simulator
+
+`schedsim` is a single-core CPU scheduling simulator used to compare the
+behaviour of different scheduling policies under controlled workloads.
+
+Currently supported policies:
+
+- First Come First Served (FCFS)
+- Shortest Job First (SJF)
+- Round Robin (RR)
+
+For a given invocation of the program, each policy is run against the same immutable workload, and the simulator reports
+standard scheduling metrics such as response time, turnaround time, waiting time,
+and makespan.
+
+The implementation focuses on:
+
+- explicit policy boundaries
+- private per-policy state
+- clear, explainable scheduling decisions
+
+See [`schedsim/README.md`](schedsim/README.md) for architecture, metrics, and
+policy details.
+
+---
+
+### `tools/` — Supporting Utilities
+
+The `tools` directory contains helper programs used to generate inputs for the
+simulators.
+
+#### `workload_gen`
+
+A command-line workload generator for `schedsim` that produces synthetic job
+arrival patterns and run-time distributions.
+
+Features:
+
+- deterministic output via fixed seeds
+- uniform and bursty arrival patterns
+- configurable arrival windows and run-time ranges
+- Unix-style output via stdout (supports piping and inspection)
+
+See [`tools/README.md`](tools/README.md) for usage and implementation notes.
+
+---
+
+## Building the project
+
+All components are built from the repository root using the top-level Makefile.
+
+To build everything:
+
+```bash
+make
+```
+This produces the following binaries in build/:
+
+``` bash
+build/memsim
+build/schedsim
+build/workload_gen
+```
+
+Individual components can also be built explicitly:
 
 ```bash
 make memsim
-./build/memsim <tracefile> <frames> <rand|fifo|lru|clock|clean-clock> <quiet|debug> [seed]
-```
-Example run:
-
-``` bash
-# From the repository root
-./build/memsim ./memsim/traces/gcc.trace 50 clock quiet
-total memory frames:                 50
-events in trace:                1000000
-total disk reads:                 70204
-total disk writes:                10495
-page fault rate (%):             7.0204
-seed:                                 1
+make schedsim
+make workload_gen
 ```
 
+## Workflow
 
+A common workflow when exploring scheduling behaviour is:
 
-## Documentation
+1. Generate a workload: `./build/workload_gen -n 20 > schedsim/workloads/example.txt` 
+2. Run the scheduler: `./build/schedsim schedsim/workloads/example.txt --all --time-slice 4`
+3. Compare metrics across policies and reason about trade-offs.
 
-Detailed design notes and implementation commentary for the virtual memory
-simulator are available here:
+Similarly, memsim can be run directly against real memory traces provided in memsim/traces/ 
 
-- [`memsim/README.md`](memsim/README.md)
-
-This includes:
-- Data structure design (`page_table`, `frame_entry`)
-- Page replacement algorithms (LRU, FIFO, CLOCK, CLEAN-CLOCK, RAND)
-- Detailed execution flow and implementation rationale
-
+## Future work
+Planned extensions include:
+- Multi-Level Feedback Queue (MLFQ) scheduling
+- Ticket-based scheduling (lottery / stride)
+- Multi-core scheduling support
+- Shared analysis tooling across simulators
 

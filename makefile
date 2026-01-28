@@ -1,5 +1,5 @@
 CC      := gcc
-CFLAGS  := -std=c11 -Wall -Wextra -O2
+CFLAGS  := -std=c11 -Wall -Wextra -O2 -Ischedsim/include
 LDFLAGS :=
 
 BUILD := build
@@ -22,12 +22,15 @@ memsim: $(MEMSIM)
 $(MEMSIM): memsim/memsim.c memsim/memsim.h | $(BUILD)
 	$(CC) $(CFLAGS) memsim/memsim.c -o $(MEMSIM) $(LDFLAGS)
 
-# ---------------- schedsim (current master layout) ----------------
+# ---------------- schedsim (refactored layout) ----------------
 
 schedsim: $(SCHEDSIM)
 
-$(SCHEDSIM): schedsim/schedsim.c schedsim/schedsim.h | $(BUILD)
-	$(CC) $(CFLAGS) schedsim/schedsim.c -o $(SCHEDSIM) $(LDFLAGS)
+$(SCHEDSIM): \
+	schedsim/src/schedsim.c \
+	schedsim/src/policies.c \
+	schedsim/src/queue.c | $(BUILD)
+	$(CC) $(CFLAGS) $^ -o $(SCHEDSIM) $(LDFLAGS)
 
 # ---------------- workload generator ----------------
 
@@ -42,7 +45,7 @@ driver: $(DRIVER)
 
 # placeholder until driver exists
 $(DRIVER): | $(BUILD)
-	@echo "driver not implemented yet"
+	@echo "Unified memory and scheduling simulator not implemented yet"
 
 clean:
 	rm -rf $(BUILD)
