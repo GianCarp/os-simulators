@@ -19,8 +19,8 @@ $(BUILD):
 
 memsim: $(MEMSIM)
 
-$(MEMSIM): memsim/memsim.c memsim/memsim.h | $(BUILD)
-	$(CC) $(CFLAGS) memsim/memsim.c -o $(MEMSIM) $(LDFLAGS)
+$(MEMSIM): memsim/main.c memsim/memsim.c memsim/memsim.h | $(BUILD)
+	$(CC) $(CFLAGS) $^ -o $(MEMSIM) $(LDFLAGS)
 
 # ---------------- schedsim (refactored layout) ----------------
 

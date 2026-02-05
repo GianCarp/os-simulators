@@ -1,25 +1,30 @@
 
 # Memory sim notes
 
+This simulator models a simplified virtual memory system with a linear page table and multiple page replacement policies supported - FIFO, LRU, clock, clean-clock, and rand. All simulator state is owned by a single Memory Management Unit (MMU) struct, which represents the global memory subsystem.
+
 ## Build and run
 
 ```bash
+# From the repository root
 make memsim
-./build/memsim <tracefile> <frames> <rand|fifo|lru|clock> <quiet|debug> [seed]
+./build/memsim <tracefile> <frames> <rand|fifo|lru|clock> [-debug] [-seed N]
 ```
 Where:
 
-- **tracefile**: file containing the memory access, of form `<address> <R|W>`
+- **tracefile**: file containing the memory access, of the form `<address> <R|W>`
 - **frames**: the number of physical frames available 
-- **policy**: page replacement policy one of LRU, FIFO, clock, clock-clean, and rand
-- **debug mode**: 'quiet' for summary only 'debug' for every event
+- **policy**: page replacement policy, one of LRU, FIFO, clock, clock-clean, or rand
+
+Options:
+- **debug mode**: `quiet` for summary only `debug` for logging every event
 - **seed**: optional seed for the random replacement policy
 
 Example run:
 
 ``` bash
 # From the repository root
-./build/memsim ./memsim/traces/gcc.trace 50 clock quiet
+./build/memsim ./memsim/traces/gcc.trace 50 clock
 total memory frames:                 50
 events in trace:                1000000
 total disk reads:                 70204
@@ -28,8 +33,26 @@ page fault rate (%):             7.0204
 seed:                                 1
 ```
 
-
 ## implementation notes
+
+### MMU struct
+
+All simulator state lives in the MMU struct. This struct owns all heap allocations and is passed expliclity to all simulator functions.
+
+```c
+typedef struct {
+  int numFrames;
+  int *page_table; // map VPN -> PFN, -1 if not resident
+  frame_entry
+      *frame_data; // contain meta data regarding access time, dirty bit, etc
+  int time;        // counter for LRU timestamps
+  int clock_hand;  // hand position for clock algorithm
+  int fifo_hand;   // hand position for FIFO algorithm
+  int next_frame;  // next free frame to allocate (sequential)
+} mmu;
+```
+Initially, all of these fields were within `main` as globals that were updated by the functions detailed below. The refactor was made to support cleaner code, where each function below acts on an `mmu` object. This facilitates multiple independent simulations or multi-core CPU modelling in the future.
+
 
 ### evicted_page struct
 
@@ -61,57 +84,62 @@ typedef struct {
 } frame_entry;
 ```
 
-This represents a physical frame (PFN) in RAM, and all the metadata associated with it, which is useful for the replacement algorithm. The simulator tracks metadata needed by multiple policies (LRU uses  `access_time`, CLOCK uses `ref`, etc.). A real OS would not necessarily track  
-all of this simultaneously if only one policy were in use.
+This represents a physical frame (PFN) in RAM, and all the metadata associated with it, which is useful for the replacement algorithm. The simulator tracks metadata needed by multiple policies, e.g. LRU uses  `access_time` and the clock algorithms use `ref`. A real OS would not necessarily track all of this simultaneously if only one policy were in use.
 
-In addition to this struct, memory is modeled via `page_table` which is a linear page table, that maps VPN to PFN. 
+In addition to this struct, memory is modeled via `page_table` (contained in MMU). This is a linear page table, that maps VPN to PFN. 
 
 The index of `frame_entry` and `page_table` are different:
 
-- The `page_table` index is a VPN, with the content being them physical frame. `page_table[VPN] = PFN` (or `-1`)
+- The `page_table` index is a VPN, with the content being them physical frame. `mmu->page_table[VPN] = PFN`, or `-1` if the virtual page is not in memory.
 
-- `frame_entry` index into is the physical frame, and the content is metadata about that frame. 
+- `frame_entry` index is the physical frame, and the content is metadata about that frame. 
 
 - `page_table` used for : I have this VPN, what frame is it in?
-- `frame_entry frame_data[PFN].vpn` used for: for this physical frame, what is in it?
 
-We need `page_table` to see if a page is in memory or not and we need the `frame_table `as replacement policies evict a page from a frame - so need to track metadata with a given frame.
+- `frame_entry` used for: for a given physical frame, what is in it? Is the page in this frame dirty? When was it last accessed?
+
+We need `page_table` to see if a page is in memory or not and we need the `frame_table` as replacement policies evict a page from a frame - so need to track metadata with a given frame.
 
 ### createMMU()
 
-`createMMU()` initialise simulator state for a machine with 'frames' physical frames. Returns 0 on success, -1 on allocation failure. Calling `createMMU()` allocates memory on the heap. This should be freed during normal shutdown and is essential if the code is reused in a long running process or driver that runs multiple simulations.
+`createMMU()` initialise simulator state for a machine with `frames` physical frames. Returns 0 on success, -1 on allocation failure. Calling `createMMU()` allocates memory on the heap. This memory should be freed during normal shutdown and is essential if the code is reused in a long running process or driver that runs multiple simulations.
+
+`createMMU()` calls `memset()` to zero initialise all fields within the struct, and then only update required fields. 
 
 ```c
-int createMMU(int frames) {
-	numFrames = frames;
-	
-	page_table = (int *)malloc(NUM_PAGES * sizeof(int));
-	frame_data = (frame_entry *)calloc(frames, sizeof(frame_entry));
-	
-	if (!page_table || !frame_data) {
-		return -1;
-	}
-	
-	for (int i = 0; i < NUM_PAGES; i++) {
-		page_table[i] = -1;
-	}
-	
-	for (int f = 0; f < frames; f++) {
-		frame_data[f].vpn = -1;
-	}
-	return 0;
+int createMMU(mmu *mmu, int frames) {
+  memset(mmu, 0, sizeof(*mmu));
+
+  mmu->numFrames = frames;
+
+  mmu->page_table = (int *)malloc(NUM_PAGES * sizeof(int));
+  mmu->frame_data = (frame_entry *)calloc(frames, sizeof(frame_entry));
+
+  if (!mmu->page_table || !mmu->frame_data) {
+    free(mmu->frame_data);
+    free(mmu->page_table);
+    return -1;
+  }
+
+  for (int i = 0; i < (int)NUM_PAGES; i++) {
+    mmu->page_table[i] = -1;
+  }
+  for (int f = 0; f < frames; f++) {
+    mmu->frame_data[f].vpn = -1;
+  }
+  return 0;
 }
 ```
 
 The simulator models a 32-bit virtual address space with fixed 4 KB pages. So, there are  $2^{20}$ pages. Therefore, allocate all of these possible mappings in the linear page table. Initialise the value of each page table entry to -1 as no pages are in memory initially.
 
-Similarly, set the vpn in `frame_data` array to -1, with other fields within frame_data being set to zero by calloc - as needed. `malloc()` used for `page_table` as after initiliasing immediately setting all values to -1, no need to initialise to 0 with `calloc()`.
+Similarly, set `vpn` entries in `frame_data` array to -1, with other fields within `frame_data` being set to zero by calloc - as required. `malloc()` used for `page_table` as after initiliasing immediately setting all values to -1, no need to initialise to 0 with `calloc()`.
 
-`createMMU()` is called once, at the start of `main()`, once all command line arguments have been successfully parsed. 
+`createMMU()` is called once, at the start of `main()`, once all command line arguments have been successfully parsed.
 
 ### Design choice, frame_entry and createMMU() refactor
 
-Initially, didn't have the `frame_entry` struct, as such was maintaining a separate array for each of the fields within `frame_entry`.
+Initially, didn't have the `frame_entry` struct, as such was maintaining a separate array for each of the fields within `frame_entry`, as shown below. `frame_entry` was then refactored again to be a member of `mmu`.
 
 
 ```c
@@ -142,20 +170,21 @@ int createMMU(int frames) {
 
 ### checkInMemory()
 
-`checkInMemory()`  determines if a given VPN is in memory or not. It returns the corresponding PFN if present, or -1 if not. 
+`checkInMemory()`  determines if a given VPN is in memory or not. It returns the corresponding PFN if present, or -1 if not.
 
-On a hit, it updates per-frame metadata used by replacement policies:
+On hit, it updates per-frame metadata used by replacement policies:
 - LRU: updates the last-access timestamp
 - clock: sets the reference bit
 
 ```c
-int checkInMemory(int vpn) {
-	int result = page_table[vpn];
-	if (result != -1) {
-		frame_data[result].access_time = _time++; // LRU	
-		frame_data[result].ref = 1; // clock
-	}	
-	return result;
+int checkInMemory(mmu *mmu, int vpn) {
+  int result = mmu->page_table[vpn];
+
+  if (result != -1) {
+    mmu->frame_data[result].access_time = mmu->time++; // LRU
+    mmu->frame_data[result].ref = 1;                   // clock
+  }
+  return result;
 }
 ```
 
@@ -163,42 +192,40 @@ int checkInMemory(int vpn) {
 
 ### allocateFrame()
 
-In this simulator, we assume physical memory starts empty. So, we allocate free frames sequentially (PFN: 0, 1, 2, …) until physical memory is full, i.e. use `allocateFrame()` until memory is full and then  we need to start using the specified page replacement policy. 
+In this simulator, we assume physical memory starts empty. So, we allocate free frames sequentially (PFN: 0, 1, 2, …) until physical memory is full, i.e. use `allocateFrame()` until memory is full and then we need to start using the specified page replacement policy. 
 
 ```c
-int allocateFrame(int vpn) {
-	int pfn = next_frame++;
-	page_table[vpn] = pfn;
-	
-	frame_data[pfn].vpn = vpn;
-	frame_data[pfn].dirty = 0;
-	frame_data[pfn].access_time = _time++;
-	frame_data[pfn].ref = 1;
-	
-	return pfn;
+int allocateFrame(mmu *mmu, int vpn) {
+  int pfn = mmu->next_frame++;
+  mmu->page_table[vpn] = pfn;
+
+  mmu->frame_data[pfn].vpn = vpn;
+  mmu->frame_data[pfn].dirty = 0;
+  mmu->frame_data[pfn].access_time = mmu->time++;
+  mmu->frame_data[pfn].ref = 1;
+
+  return pfn;
 }
 ```
 
-
-`next_frame` is a global integer, initiliased to 0, that is used to place the pages contiguously while `allocated` is less than `frames` specified by the command line argument. In the main loop:
+`int next_frame` is tracked inside the mmu struct, to internally determine which next sequentail frame is free. In the main loop:
 
 ```c
 // ...
-if (allocated < frames) {
-	pfn = allocateFrame(vpn);
-	allocated++;
+ if (mmu.next_frame < mmu.numFrames) {
+        pfn = allocateFrame(&mmu, vpn);
 } else {
-	Pvictim = replacePage(vpn, replace, &pfn);
+	Pvictim = replacePage(&mmu, vpn, replace, &pfn);
 // ....
 ```
 
-`allocateFrame()` simply places the vpn into the next free frame, and updates the metadata within `frame_data`. 
+`allocateFrame()` simply places the vpn into the next free frame, and updates the metadata within `mmu->frame_data`. 
 
 `allocateFrame()` returns the pfn that was just used to store the vpn, so that after calling we can inspect if we have performed a write operation on the page. If so we mark the page as dirty so that we know we have to save it to disk when replacing the page.
 
 ```c
 if (pfn != -1 && rw == 'W') {
-	frame_data[pfn].dirty = 1;
+	mmu.frame_data[pfn].dirty = 1;
 }
 ```
 
@@ -222,7 +249,7 @@ Regardless:
 
 #### LRU
 
-LRU victim selection is implemented by scanning frames for the minimum timestamp, this is O(numFrames), which is fine for this simulator where performance isn't required - this is the reason LRU is approximate with clock anyway in real systems? 
+LRU victim selection is implemented by scanning frames for the minimum timestamp, this is O(numFrames), which is fine for this simulator where performance isn't required - this is the reason LRU is approximate with clock anyway in real systems. 
 
 #### Random
 
