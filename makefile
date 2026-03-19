@@ -15,14 +15,12 @@ all: memsim schedsim workload_gen driver
 $(BUILD):
 	mkdir -p $(BUILD)
 
-# ---------------- memsim ----------------
 
 memsim: $(MEMSIM)
 
-$(MEMSIM): memsim/main.c memsim/memsim.c memsim/memsim.h | $(BUILD)
+$(MEMSIM): memsim/main.c memsim/memsim.c | $(BUILD)
 	$(CC) $(CFLAGS) $^ -o $(MEMSIM) $(LDFLAGS)
 
-# ---------------- schedsim (refactored layout) ----------------
 
 schedsim: $(SCHEDSIM)
 
@@ -32,14 +30,12 @@ $(SCHEDSIM): \
 	schedsim/src/queue.c | $(BUILD)
 	$(CC) $(CFLAGS) $^ -o $(SCHEDSIM) $(LDFLAGS)
 
-# ---------------- workload generator ----------------
 
 workload_gen: $(WORKLOAD_GEN)
 
 $(WORKLOAD_GEN): tools/workload_gen.c | $(BUILD)
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
-# ---------------- driver ----------------
 
 driver: $(DRIVER)
 
