@@ -38,8 +38,6 @@ int main(int argc, char *argv[]) {
   uint32_t address;  // full address, shift by 12 bits to get the vpn
   int vpn;           // vpn derived from address
   int pfn;           // pfn the page currently resides in
-  int status;        // captures return status of createMMU(), -1 indicates heap
-                     // allocation failed.
   int memory_access; // stores the return value of fscanf(), should be 2 to
                      // indicate an address and R/W instruction
   char rw;
@@ -50,7 +48,7 @@ int main(int argc, char *argv[]) {
   int debugmode = 0; // default quiet
   enum repl replace;
 
-  evicted_page Pvictim;
+  replace_result page_replaced;
   FILE *trace;
   unsigned seed = 1;
 
@@ -139,9 +137,8 @@ int main(int argc, char *argv[]) {
   // Argument parsing ends
   //
 
-  mmu mmu;
-  status = createMMU(&mmu, frames);
-  if (status == -1) {
+  mmu *mmu_ptr = createMMU(frames);
+  if (mmu_ptr == NULL) {
     fprintf(stderr, "Cannot create MMU\n");
     fclose(trace);
     return EXIT_FAILURE;
@@ -150,7 +147,7 @@ int main(int argc, char *argv[]) {
   memory_access = fscanf(trace, "%x %c", &address, &rw);
   while (memory_access == 2) {
     vpn = (int)(address >> pageoffset);
-    pfn = checkInMemory(&mmu, vpn);
+    pfn = checkInMemory(mmu_ptr, vpn);
 
     if (pfn == -1) {
       page_faults++;
@@ -158,19 +155,19 @@ int main(int argc, char *argv[]) {
         printf("Page fault %8d\n", vpn);
       }
 
-      if (mmu.next_frame < mmu.numFrames) {
-        pfn = allocateFrame(&mmu, vpn);
+      if (has_free_frames(mmu_ptr) == 1) {
+        pfn = allocateFrame(mmu_ptr, vpn);
       } else {
-        Pvictim = replacePage(&mmu, vpn, replace, &pfn);
-
-        if (Pvictim.dirty) {
+        page_replaced = replacePage(mmu_ptr, vpn, replace);
+        pfn = page_replaced.new_pfn;
+        if (page_replaced.victim.dirty) {
           disk_writes++;
           if (debugmode) {
-            printf("Disk write %8d\n", Pvictim.vpn);
+            printf("Disk write %8d\n", page_replaced.victim.vpn);
           }
         } else {
           if (debugmode) {
-            printf("Discard    %8d\n", Pvictim.vpn);
+            printf("Discard    %8d\n", page_replaced.victim.vpn);
           }
         }
       }
@@ -178,13 +175,13 @@ int main(int argc, char *argv[]) {
 
     // Marking the frame as dirty if written to
     if (pfn != -1 && rw == 'W') {
-      mmu.frame_data[pfn].dirty = 1;
+      mark_dirty(mmu_ptr, pfn);
     }
 
     if (rw != 'R' && rw != 'W') {
       fprintf(stderr, "Badly formatted file. Error on line %d\n",
               no_events + 1);
-      destroyMMU(&mmu);
+      destroyMMU(mmu_ptr);
       fclose(trace);
       return EXIT_FAILURE;
     }
@@ -213,7 +210,7 @@ int main(int argc, char *argv[]) {
   printf("%-28s %10.4f\n", "page fault rate (%):", page_fault_percent);
   printf("%-28s %10u\n", "seed:", seed);
 
-  destroyMMU(&mmu);
+  destroyMMU(mmu_ptr);
   fclose(trace);
 
   return EXIT_SUCCESS;

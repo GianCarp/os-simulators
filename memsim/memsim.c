@@ -5,27 +5,68 @@
 #include <string.h>
 #include <unistd.h>
 
-int createMMU(mmu *mmu, int frames) {
-  memset(mmu, 0, sizeof(*mmu));
+// Per-frame meta-data, needed by the page replacement policies
+typedef struct {
+  int vpn;   // which page is in this frame, -1 if free
+  int dirty; // if the frame has been written to, 0 or 1 for clean or dirty
+  int access_time; // LRU timestamp
+  int ref;         // clock ref bit
+} frame_entry;
 
-  mmu->numFrames = frames;
+// In a real OS, the page table and physical frame metadata are separate
+// structures owned by different parts of the kernel. The page table is
+// per-process, stored in kernel space, and used for VPN to PFN address
+// translation. The physical frame metadata (mem_map) is a global
+// kernel structure used by the page replacement system to track the
+// contents and state of each physical frame.
+//
+// Since this simulator models a single process, both are collapsed into
+// this struct for simplicity.
+struct mmu {
+  int numFrames;
+  int *page_table; // map VPN -> PFN, -1 if not resident
+  frame_entry
+      *frame_data; // contain meta data regarding access time, dirty bit, etc
+  int time;        // counter for LRU timestamps
+  int clock_hand;  // hand position for clock algorithm
+  int fifo_hand;   // hand position for FIFO algorithm
+  int next_frame;  // next free frame to allocate (sequential)
+};
 
-  mmu->page_table = (int *)malloc(NUM_PAGES * sizeof(int));
-  mmu->frame_data = (frame_entry *)calloc(frames, sizeof(frame_entry));
+int has_free_frames(mmu *mmu_ptr) {
+  if (mmu_ptr->next_frame < mmu_ptr->numFrames) {
+    return 1;
+  }
+  return -1;
+}
 
-  if (!mmu->page_table || !mmu->frame_data) {
-    free(mmu->frame_data);
-    free(mmu->page_table);
-    return -1;
+void mark_dirty(mmu *mmu_ptr, int pfn) { mmu_ptr->frame_data[pfn].dirty = 1; }
+
+mmu *createMMU(int frames) {
+  mmu *mmu_ptr = (mmu *)malloc(sizeof(mmu));
+  if (mmu_ptr == NULL) {
+    return NULL;
+  }
+  memset(mmu_ptr, 0, sizeof(*mmu_ptr));
+  mmu_ptr->numFrames = frames;
+
+  mmu_ptr->page_table = (int *)malloc(NUM_PAGES * sizeof(int));
+  mmu_ptr->frame_data = (frame_entry *)calloc(frames, sizeof(frame_entry));
+
+  if (!mmu_ptr->page_table || !mmu_ptr->frame_data) {
+    free(mmu_ptr->frame_data);
+    free(mmu_ptr->page_table);
+    free(mmu_ptr);
+    return NULL;
   }
 
   for (int i = 0; i < (int)NUM_PAGES; i++) {
-    mmu->page_table[i] = -1;
+    mmu_ptr->page_table[i] = -1;
   }
   for (int f = 0; f < frames; f++) {
-    mmu->frame_data[f].vpn = -1;
+    mmu_ptr->frame_data[f].vpn = -1;
   }
-  return 0;
+  return mmu_ptr;
 }
 
 void destroyMMU(mmu *mmu) {
@@ -33,6 +74,7 @@ void destroyMMU(mmu *mmu) {
   mmu->frame_data = NULL;
   free(mmu->page_table);
   mmu->page_table = NULL;
+  free(mmu);
 }
 
 // Checks if the page is in memory, returns frame no or -1 if not found
@@ -60,8 +102,8 @@ int allocateFrame(mmu *mmu, int vpn) {
 }
 
 // Selects a page for eviction according to the replacement algorithm
-evicted_page replacePage(mmu *mmu, int vpn, enum repl mode, int *new_frame) {
-  evicted_page victim;
+replace_result replacePage(mmu *mmu, int vpn, enum repl mode) {
+  replace_result page_info;
   int victim_frame = -1; // Initialise to -1 as a gaurd
 
   // LRU
@@ -139,12 +181,12 @@ evicted_page replacePage(mmu *mmu, int vpn, enum repl mode, int *new_frame) {
   }
 
   // Victim page return value set-up
-  victim.vpn = mmu->frame_data[victim_frame].vpn;
-  victim.dirty = mmu->frame_data[victim_frame].dirty;
+  page_info.victim.vpn = mmu->frame_data[victim_frame].vpn;
+  page_info.victim.dirty = mmu->frame_data[victim_frame].dirty;
 
   // Flag victim as not being present in memory
-  if (victim.vpn != -1) {
-    mmu->page_table[victim.vpn] = -1;
+  if (page_info.victim.vpn != -1) {
+    mmu->page_table[page_info.victim.vpn] = -1;
   }
 
   // Map new page into victim frame
@@ -156,9 +198,7 @@ evicted_page replacePage(mmu *mmu, int vpn, enum repl mode, int *new_frame) {
   mmu->frame_data[victim_frame].dirty = 0;
   mmu->frame_data[victim_frame].ref = 1;
 
-  if (new_frame) {
-    *new_frame = victim_frame;
-  }
+  page_info.new_pfn = victim_frame;
 
-  return victim;
+  return page_info;
 }

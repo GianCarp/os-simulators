@@ -32,6 +32,20 @@ total disk writes:                10495
 page fault rate (%):             7.0204
 seed:                                 1
 ```
+## Recent changes + planned work
+
+- `mmu` struct made opaque, implementation details hidden in `memsim.c`
+- `createMMU()` refactored to return `mmu *` (heap allocated) rather than taking a pointer parameter
+- replacePage() now returns a replace_result struct containing both the new PFN and evicted page metadata, replacing the previous design which mixed a return value for the victim page with an out-parameter for the new frame number
+- Added `has_free_frames()` and `mark_dirty()` accessor functions to support the opaque type
+
+Full README update pending. Planning to introduce a TLB and L1-L3 cache into the simulator to increase fidelity and make it more extensible for a multi-process environment.
+
+**The following README sections are currently out of date** and will be updated, once the TLB and L1 -L3 caches are implemented.
+- `createMMU()` -- signature and code snippet reflect old design
+- `allocateFrame()` -- code snippets use old dot notation and direct field access
+- Execution after selecting the victim frame -- describes old out-parameter design, now replaced by `replace_result`
+
 
 ## implementation notes
 
@@ -249,7 +263,15 @@ Regardless:
 
 #### LRU
 
-LRU victim selection is implemented by scanning frames for the minimum timestamp, this is O(numFrames), which is fine for this simulator where performance isn't required - this is the reason LRU is approximate with clock anyway in real systems. 
+LRU uses a simple O(n) scan through the entire array as this was simple to implement. Looked briefly at implementing a more realistic LRU using a doubly linked list and a hashamp, but opted to leave this for a later refactor. 
+
+The doubly linked list is used to store pages in access order, the head being the most recently used and tail being least recently used. 
+- Evict from the tail, so constant time O(1).
+- Cache hit just moves that node to the front. Doubly linked list, so relink in place, constant time O(1)
+
+Hashmap is to save scanning through the entire linked list for a page, key is the VPN and value is a pointer to the node. 
+
+I chose the simplistic array scan approach over performance here as correctness and clarity matter more for a simulator.
 
 #### Random
 
