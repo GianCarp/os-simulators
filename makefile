@@ -25,11 +25,11 @@ $(MEMSIM): memsim/main.c memsim/memsim.c | $(BUILD)
 schedsim: $(SCHEDSIM)
 
 $(SCHEDSIM): \
+	schedsim/src/main.c \
 	schedsim/src/schedsim.c \
 	schedsim/src/policies.c \
 	schedsim/src/queue.c | $(BUILD)
 	$(CC) $(CFLAGS) $^ -o $(SCHEDSIM) $(LDFLAGS)
-
 
 workload_gen: $(WORKLOAD_GEN)
 

@@ -5,23 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { MAX_POLICIES = 3 };
-
-static void usage(const char *prog) {
-  fprintf(stderr,
-          "Usage:\n"
-          "  %s <inputfile> <policy> [--time-slice N]\n"
-          "  %s <inputfile> --all --time-slice N\n"
-          "  %s <inputfile> --policies P1,P2[,P3...] [--time-slice N]\n"
-          "\n"
-          "Policies: FCFS, SJF, RR\n"
-          "\n"
-          "Options:\n"
-          "  --time-slice N   Required when RR is selected\n"
-          "  -h               Show this help message\n",
-          prog, prog, prog);
-}
-
 static const char *policy_name(enum sched_policy policy) {
   switch (policy) {
   case FCFS:
@@ -76,54 +59,6 @@ static void print_results(const job_t *jobs, int num_jobs,
   printf("  Turnaround time : %.2f\n", (double)total_turnaround / num_jobs);
   printf("  Waiting time    : %.2f\n", (double)total_waiting / num_jobs);
   printf("  Makespan        : %d\n", makespan);
-}
-
-static int parse_policy_list(const char *list, enum sched_policy *policies,
-                             int *num_policies) {
-  char buf[128];
-
-  if (strlen(list) >= sizeof(buf)) {
-    fprintf(stderr, "Policy list too long\n");
-    return -1;
-  }
-
-  strcpy(buf, list);
-
-  *num_policies = 0;
-
-  char *tok = strtok(buf, ",");
-
-  while (tok != NULL) {
-    if (*tok == '\0') {
-      fprintf(stderr, "Empty policy in list\n");
-      return -1;
-    }
-
-    if (*num_policies >= MAX_POLICIES) {
-      fprintf(stderr, "Too many policies (max 3)\n");
-      return -1;
-    }
-
-    if (strcmp(tok, "FCFS") == 0) {
-      policies[(*num_policies)++] = FCFS;
-    } else if (strcmp(tok, "SJF") == 0) {
-      policies[(*num_policies)++] = SJF;
-    } else if (strcmp(tok, "RR") == 0) {
-      policies[(*num_policies)++] = RR;
-    } else {
-      fprintf(stderr, "Unknown policy in list: %s\n", tok);
-      return -1;
-    }
-
-    tok = strtok(NULL, ",");
-  }
-
-  if (*num_policies == 0) {
-    fprintf(stderr, "No policies specified\n");
-    return -1;
-  }
-
-  return 0;
 }
 
 void workload_free(workload_t *workload) {
@@ -285,147 +220,10 @@ void schedsim_run(const workload_t *workload, enum sched_policy policy,
     fprintf(stderr, "Failed to allocate job copy\n");
     return;
   }
-  int num_jobs = workload->num_jobs;
 
-  run_policy(jobs, policy, num_jobs, time_slice);
+  run_policy(jobs, policy, workload->num_jobs, time_slice);
 
   print_results(jobs, workload->num_jobs, policy); // pure reporting
 
   free(jobs);
-}
-
-int main(int argc, char *argv[]) {
-
-  //
-  // BEGIN PARSING ARGUMENTS
-  //
-
-  if (argc >= 2 && (strcmp(argv[1], "-h") == 0)) {
-    usage(argv[0]);
-    return 0;
-  }
-
-  if (argc < 3 || argc > 6) {
-    usage(argv[0]);
-    return EXIT_FAILURE;
-  }
-
-  int time_slice = -1;
-  enum sched_policy policies[MAX_POLICIES];
-  int num_policies = 0;
-
-  if (strcmp(argv[2], "--all") == 0) {
-    if (argc != 5 || strcmp(argv[3], "--time-slice") != 0) {
-      usage(argv[0]);
-      return EXIT_FAILURE;
-    }
-
-    time_slice = atoi(argv[4]);
-    if (time_slice <= 0) {
-      usage(argv[0]);
-      return EXIT_FAILURE;
-    }
-
-    policies[0] = FCFS;
-    policies[1] = SJF;
-    policies[2] = RR;
-    num_policies = 3;
-
-  } else if (strcmp(argv[2], "--policies") == 0) {
-
-    /* Fixed-order supported form examples:
-     *   schedsim <workload> --policies FCFS,SJF -> argc = 4
-     *   schedsim <workload> --policies FCFS,RR,SJF --time-slice N -> argc = 6
-     *   i.e if RR included must give --time-slice N
-     */
-    if (argc != 4 && argc != 6) {
-      usage(argv[0]);
-      return EXIT_FAILURE;
-    }
-
-    const char *list = argv[3];
-
-    if (parse_policy_list(list, policies, &num_policies) != 0) {
-      usage(argv[0]);
-      return EXIT_FAILURE;
-    }
-
-    // After parsing, check whether RR is included
-    int includes_rr = 0;
-    for (int i = 0; i < num_policies; i++) {
-      if (policies[i] == RR) {
-        includes_rr = 1;
-        break;
-      }
-    }
-
-    if (includes_rr) {
-      if (argc != 6 || strcmp(argv[4], "--time-slice") != 0) {
-        fprintf(stderr, "RR selected: must supply --time-slice N\n");
-        usage(argv[0]);
-        return EXIT_FAILURE;
-      }
-
-      time_slice = atoi(argv[5]);
-      if (time_slice <= 0) {
-        fprintf(stderr, "--time-slice must be > 0\n");
-        usage(argv[0]);
-        return EXIT_FAILURE;
-      }
-    } else {
-      // No RR, time_slice not needed
-      time_slice = -1;
-      if (argc == 6) {
-        fprintf(stderr, "--time-slice provided but RR not selected\n");
-        usage(argv[0]);
-        return EXIT_FAILURE;
-      }
-    }
-
-  } else {
-    // Single policy
-    if (strcmp(argv[2], "FCFS") == 0) {
-      policies[0] = FCFS;
-      num_policies = 1;
-
-    } else if (strcmp(argv[2], "SJF") == 0) {
-      policies[0] = SJF;
-      num_policies = 1;
-
-    } else if (strcmp(argv[2], "RR") == 0) {
-      if (argc != 5 || strcmp(argv[3], "--time-slice") != 0) {
-        usage(argv[0]);
-        return EXIT_FAILURE;
-      }
-
-      time_slice = atoi(argv[4]);
-      if (time_slice <= 0) {
-        usage(argv[0]);
-        return EXIT_FAILURE;
-      }
-
-      policies[0] = RR;
-      num_policies = 1;
-
-    } else {
-      usage(argv[0]);
-      return EXIT_FAILURE;
-    }
-  }
-
-  //
-  // END PARSING ARGUMENTS
-  //
-
-  workload_t w;
-  if (workload_load(argv[1], &w) != 0) {
-    return EXIT_FAILURE;
-  }
-  for (int i = 0; i < num_policies; i++) {
-    schedsim_run(&w, policies[i], time_slice);
-  }
-
-  workload_free(&w);
-
-  return EXIT_SUCCESS;
 }

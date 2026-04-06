@@ -31,10 +31,7 @@ void sjf(job_t *jobs, const int num_jobs) {
 
     // Find shortest job
     for (int i = 0; i < num_jobs; i++) {
-      if (done[i]) {
-        continue;
-      }
-      if (jobs[i].arrival_time > current_time) {
+      if (done[i] || jobs[i].arrival_time > current_time) {
         continue;
       }
       // set best to first job that can be run. For ties use earliest arrival,
@@ -86,11 +83,9 @@ void sjf(job_t *jobs, const int num_jobs) {
   }
 }
 
-/*
- * Round Robin scheduling (preemptive).
- * Uses a FIFO ready queue. Assumes jobs[] sorted by arrival_time and that
- * start_time is initialised to -1 and remaining_time to run_time.
- */
+// Round Robin scheduling (preemptive). Uses a FIFO ready queue. Assumes jobs[]
+// sorted by arrival_time and that start_time is initialised to -1 and
+// remaining_time to run_time.
 void rr(job_t *jobs, const int num_jobs, const int time_slice) {
 
   int current_time = 0;

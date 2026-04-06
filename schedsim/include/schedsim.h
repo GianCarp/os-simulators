@@ -1,6 +1,8 @@
 #ifndef SCHEDSIM_H
 #define SCHEDSIM_H
 
+#define MAX_POLICIES 3
+
 // Represents a single job
 typedef struct {
   int id; // job identifier read from workload file, expected to be sequential

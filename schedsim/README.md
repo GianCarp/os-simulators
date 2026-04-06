@@ -71,23 +71,30 @@ Specific policies can be selected:
 
 To improve maintainability and enforce separation of concerns, `schedsim` is split into several header and implementation pairs:
 
+- `main.c`
 - `schedsim.h / schedsim.c`
 - `policies.h / policies.c`
 - `queue.h / queue.c`
 
 Each module has a well-defined responsibility, described below.
 
-### schedsim.h / schedsim.c – simulator driver
+### main.c – entry point and argument parsing
 
-This module acts as the event driver for the simulator and is responsible for:
+`main.c` is responsible for:
+- Parsing and validating command-line arguments
+- Loading the workload via `workload_load()`
+- Dispatching to `schedsim_run()` for each selected policy
+- Freeing resources on exit
 
-- Parsing command-line arguments
+### schedsim.h / schedsim.c – simulator library
+
+This module is the core simulation library and is responsible for:
 - Loading and validating workloads
 - Treating workloads as immutable input
 - Dispatching private job copies to scheduling policies
 - Aggregating and printing results
 
-`schedsim_run(const workload_t *)` explicitly treats the workload as read-only input. Each policy invocation operates on a private copy of the job array, allowing multiple policies to be run safely on the same workload without shared state.
+`schedsim_run()` explicitly treats the workload as read-only input. Each policy invocation operates on a private copy of the job array, allowing multiple policies to be run safely on the same workload without shared state.
 
 ### policies.h / policies.c - scheduling logic
 
@@ -215,7 +222,7 @@ An input workload is represented with the following struct:
 ```c
 typedef struct {
     job_t *jobs;
-    int count;
+    int num_jobs;
 } workload_t;
 ```
 
@@ -238,7 +245,7 @@ Note that `workload` is passed as `const workload_t *`.  Each run makes a mutabl
 
 ### main() argument parsing
 
-The argument parsing logic in `schedsim` is designed to support running multiple scheduling policies in a single invocation of the program, while enforcing clear and explicit constraints on valid combinations of flags.
+The argument parsing logic is designed to support running multiple scheduling policies in a single invocation of the program, while enforcing clear and explicit constraints on valid combinations of flags.
 
 Rather than relying on generic option parsing libraries, the simulator performs explicit positional checks on `argv`. This keeps control flow easy to reason about and ensures that invalid combinations of arguments are rejected early with clear error messages.
 
@@ -267,7 +274,7 @@ To support this, the parser first validates that `argc` is within a fixed range,
 3. **Single-policy mode**  
     If neither `--all` nor `--policies` is present, the simulator treats the second argument as a single policy identifier. This path has the fewest moving parts and serves as the base case for the parser.
 
-By structuring the argument parsing this way, `schedsim` ensures that:
+Structuring the argument parsing this way ensures that:
 
 - Invalid combinations of flags are rejected deterministically
 - The presence of Round robin always implies a valid time slice
