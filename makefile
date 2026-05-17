@@ -1,8 +1,8 @@
 CC      := gcc
-CFLAGS  := -std=c11 -Wall -Wextra -O2 -Ischedsim/include
+CFLAGS  := -std=c11 -Wall -Wextra -O2 
 LDFLAGS :=
-
 BUILD := build
+
 MEMSIM := $(BUILD)/memsim
 SCHEDSIM := $(BUILD)/schedsim
 WORKLOAD_GEN := $(BUILD)/workload_gen
@@ -29,7 +29,7 @@ $(SCHEDSIM): \
 	schedsim/src/schedsim.c \
 	schedsim/src/policies.c \
 	schedsim/src/queue.c | $(BUILD)
-	$(CC) $(CFLAGS) $^ -o $(SCHEDSIM) $(LDFLAGS)
+	$(CC) $(CFLAGS) -Ischedsim/include $^ -o $(SCHEDSIM) $(LDFLAGS)
 
 workload_gen: $(WORKLOAD_GEN)
 

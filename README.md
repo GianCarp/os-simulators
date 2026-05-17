@@ -1,9 +1,9 @@
 # OS Simulators
 
-This repository contains a collection of small, focused simulators for exploring
+This repository contains a collection of simulators for exploring
 core operating system policies in controlled environments. Each simulator
-isolates a specific OS mechanism (e.g. CPU scheduling, virtual memory replacement)
-and exposes its behaviour through reproducible workloads and detailed metrics.
+isolates a specific OS mechanism, i.e. CPU scheduling or virtual memory replacement,
+and exposes the policies behaviour through reproducible workloads and detailed performance metrics.
 
 The goal of the project is not to emulate a full operating system, but to make
 individual policy decisions explicit, observable, and comparable, while keeping
@@ -15,7 +15,7 @@ implementations simple enough to reason about and extend.
 os-simulators/
 ├── memsim/ # Virtual memory page replacement simulator
 ├── schedsim/ # Single-core CPU scheduling simulator
-├── tools/ # Supporting tools (e.g. workload generators)
+├── tools/ # Supporting tools (i.e. workload generator)
 ├── build/ # Build outputs (ignored by git)
 ├── makefile # Top-level build orchestration
 └── README.md # This file
@@ -34,10 +34,11 @@ access patterns.
 Supported policies include:
 
 - FIFO
-- LRU
-- CLOCK
-- CLEAN-CLOCK
 - Random
+- Clock
+- Clean-clock
+- LRU simple - O(n) scan
+- LRU advanced - O(1) implementation
 
 The simulator reports page fault rates, disk reads, and disk writes, and supports
 deterministic replay via a fixed RNG seed.
@@ -57,9 +58,7 @@ Currently supported policies:
 - Shortest Job First (SJF)
 - Round Robin (RR)
 
-For a given invocation of the program, each policy is run against the same immutable workload, and the simulator reports
-standard scheduling metrics such as response time, turnaround time, waiting time,
-and makespan.
+For a given invocation of the program, each policy is run against the same immutable workload. The simulator reports standard scheduling metrics such as response time, turn-around time, waiting time, and makespan.
 
 The implementation focuses on:
 
@@ -126,7 +125,7 @@ A common workflow when exploring scheduling behaviour is:
 2. Run the scheduler: `./build/schedsim schedsim/workloads/example.txt --all --time-slice 4`
 3. Compare metrics across policies and reason about trade-offs.
 
-Similarly, memsim can be run directly against real memory traces provided in memsim/traces/ 
+Similarly, memsim can be run directly against real memory traces provided in `memsim/traces/`
 
 ## Future work
 Planned extensions include:

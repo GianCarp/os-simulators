@@ -1,8 +1,11 @@
+#define _XOPEN_SOURCE 600
+
 #include "memsim.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static void usage(const char *prog) {
   fprintf(stderr,
@@ -10,7 +13,7 @@ static void usage(const char *prog) {
           "  %s <tracefile> <num_frames> <policy> [-debug] [-seed N]\n"
           "\n"
           "Policies:\n"
-          "  fifo | lru | clock | rand | clean-clock\n"
+          "  fifo | lru-simple | lru-advanced | rand | clock | clean-clock\n"
           "\n"
           "Options:\n"
           "  -debug      Print per-access trace (default: quiet)\n"
@@ -87,7 +90,9 @@ int main(int argc, char *argv[]) {
     return EXIT_FAILURE;
   }
 
-  if (strcmp(argv[3], "lru") == 0) {
+  if (strcmp(argv[3], "lru-simple") == 0) {
+    replace = lru_simple;
+  } else if (strcmp(argv[3], "lru-advanced") == 0) {
     replace = lru;
   } else if (strcmp(argv[3], "rand") == 0) {
     replace = _random;
@@ -98,8 +103,8 @@ int main(int argc, char *argv[]) {
   } else if (strcmp(argv[3], "clean-clock") == 0) {
     replace = _clock_clean;
   } else {
-    fprintf(stderr, "Replacement algorithm must be rand, fifo, lru, clock or "
-                    "clean-clock\n");
+    fprintf(stderr, "Replacement algorithm must be rand, fifo, lru-simple, "
+                    "lru-advanced, clock, or clean-clock\n");
     fclose(trace);
     return EXIT_FAILURE;
   }
@@ -137,7 +142,7 @@ int main(int argc, char *argv[]) {
   // Argument parsing ends
   //
 
-  mmu *mmu_ptr = createMMU(frames);
+  mmu *mmu_ptr = create_MMU(frames, replace);
   if (mmu_ptr == NULL) {
     fprintf(stderr, "Cannot create MMU\n");
     fclose(trace);
@@ -147,7 +152,7 @@ int main(int argc, char *argv[]) {
   memory_access = fscanf(trace, "%x %c", &address, &rw);
   while (memory_access == 2) {
     vpn = (int)(address >> pageoffset);
-    pfn = checkInMemory(mmu_ptr, vpn);
+    pfn = check_in_memory(mmu_ptr, vpn);
 
     if (pfn == -1) {
       page_faults++;
@@ -156,9 +161,9 @@ int main(int argc, char *argv[]) {
       }
 
       if (has_free_frames(mmu_ptr) == 1) {
-        pfn = allocateFrame(mmu_ptr, vpn);
+        pfn = allocate_frame(mmu_ptr, vpn);
       } else {
-        page_replaced = replacePage(mmu_ptr, vpn, replace);
+        page_replaced = replace_page(mmu_ptr, vpn);
         pfn = page_replaced.new_pfn;
         if (page_replaced.victim.dirty) {
           disk_writes++;
@@ -181,7 +186,7 @@ int main(int argc, char *argv[]) {
     if (rw != 'R' && rw != 'W') {
       fprintf(stderr, "Badly formatted file. Error on line %d\n",
               no_events + 1);
-      destroyMMU(mmu_ptr);
+      destroy_MMU(mmu_ptr);
       fclose(trace);
       return EXIT_FAILURE;
     }
@@ -192,8 +197,9 @@ int main(int argc, char *argv[]) {
       } else { // rw == 'W'
         printf("writing    %8d\n", vpn);
       }
+      printf("\n");
+      usleep(600000);
     }
-
     no_events++;
     memory_access = fscanf(trace, "%x %c", &address, &rw);
   }
@@ -210,7 +216,7 @@ int main(int argc, char *argv[]) {
   printf("%-28s %10.4f\n", "page fault rate (%):", page_fault_percent);
   printf("%-28s %10u\n", "seed:", seed);
 
-  destroyMMU(mmu_ptr);
+  destroy_MMU(mmu_ptr);
   fclose(trace);
 
   return EXIT_SUCCESS;

@@ -1,20 +1,31 @@
 
 # Memory sim notes
 
-This simulator models a simplified virtual memory system with a linear page table and multiple page replacement policies supported - FIFO, LRU, clock, clean-clock, and rand. All simulator state is owned by a single Memory Management Unit (MMU) struct, which represents the global memory subsystem.
+This simulator models a simplified virtual memory system with a linear page table and multiple page replacement policies supported - FIFO, simple LRU, advanced LRU, clock, clean-clock, and rand. All simulator state is owned by a single Memory Management Unit (MMU) struct, which represents the global memory subsystem.
 
 ## Build and run
 
 ```bash
-# From the repository root
-make memsim
-./build/memsim <tracefile> <frames> <rand|fifo|lru|clock> [-debug] [-seed N]
+# From the repository root build with:
+make all OR make memsim
+./build/memsim 
+# Usage:
+  ./build/memsim <tracefile> <num_frames> <policy> [-debug] [-seed N]
+
+Policies:
+  fifo | lru-simple | lru-advanced | rand | clock | clean-clock
+
+Options:
+  -debug      Print per-access trace (default: quiet)
+  -seed N     Set RNG seed for rand policy (default: 1)
+  -h          Show this help message
+
 ```
 Where:
 
-- **tracefile**: file containing the memory access, of the form `<address> <R|W>`
-- **frames**: the number of physical frames available 
-- **policy**: page replacement policy, one of LRU, FIFO, clock, clock-clean, or rand
+- **tracefile**: file containing the memory access, of the form `<address> <R|W>`. Tracefiles provided in `/memsim/traces`
+- **frames**: the number of physical frames available, as desired by the user 
+- **policy**: page replacement policy, one of the options as listed above
 
 Options:
 - **debug mode**: `quiet` for summary only `debug` for logging every event
@@ -32,250 +43,193 @@ total disk writes:                10495
 page fault rate (%):             7.0204
 seed:                                 1
 ```
-## Recent changes + planned work
 
-- `mmu` struct made opaque, implementation details hidden in `memsim.c`
-- `createMMU()` refactored to return `mmu *` (heap allocated) rather than taking a pointer parameter
-- replacePage() now returns a replace_result struct containing both the new PFN and evicted page metadata, replacing the previous design which mixed a return value for the victim page with an out-parameter for the new frame number
-- Added `has_free_frames()` and `mark_dirty()` accessor functions to support the opaque type
+## Implementation notes
 
-Full README update pending. Planning to introduce a TLB and L1-L3 cache into the simulator to increase fidelity and make it more extensible for a multi-process environment.
+### Structs
+The simulator uses a mix of public and internal structs to achieve a clean API and hide implementation details from callers. The split enforces an opaque design, where callers are only able to interact with the simulator state through the API functions; i.e. using a pointer to a heap allocate `mmu` struct as opposed to creating the object on the stack and having access to internal fields directly. 
 
-**The following README sections are currently out of date** and will be updated, once the TLB and L1 -L3 caches are implemented.
-- `createMMU()` -- signature and code snippet reflect old design
-- `allocateFrame()` -- code snippets use old dot notation and direct field access
-- Execution after selecting the victim frame -- describes old out-parameter design, now replaced by `replace_result`
-
-
-## implementation notes
-
-### MMU struct
-
-All simulator state lives in the MMU struct. This struct owns all heap allocations and is passed expliclity to all simulator functions.
+#### mmu struct
+```c
+typedef struct mmu mmu;
+```
+`mmu` is declared as an incomplete type in `memsim.h`, with its definition being in `memsim.c`. Callers obtain a `mmu *` returned by `create_MMU()` and pass it to every API function. It is not possible for callers to access fields directly. All simulator state lives in this struct, it owns the heap allocated `page_table` and `frame_data`.
 
 ```c
-typedef struct {
+struct mmu {
   int numFrames;
-  int *page_table; // map VPN -> PFN, -1 if not resident
-  frame_entry
-      *frame_data; // contain meta data regarding access time, dirty bit, etc
-  int time;        // counter for LRU timestamps
-  int clock_hand;  // hand position for clock algorithm
-  int fifo_hand;   // hand position for FIFO algorithm
-  int next_frame;  // next free frame to allocate (sequential)
-} mmu;
+  int *page_table;       // VPN -> PFN, -1 if not resident
+  frame_entry *frame_data; // per-frame metadata array
+  int time;              // time used in simple LRU 
+  int clock_hand;        // current position for clock algorithms
+  int fifo_hand;         // current position for FIFO
+  int next_frame;        // next free frame index during initial fill
+  lru_tracker lru_state; // head/tail pointers for the DLL used in advanced LRU
+  enum repl mode;        // active replacement policy
+};
 ```
-Initially, all of these fields were within `main` as globals that were updated by the functions detailed below. The refactor was made to support cleaner code, where each function below acts on an `mmu` object. This facilitates multiple independent simulations or multi-core CPU modelling in the future.
+`mode` is stored within the struct so that `check_in_memory()` and `allocate_frame()` only update the relevant per-frame metadata without needing the policy passed as a parameter on every call. 
 
+In a real OS, the `page_table` and `frame_data` are separate kernel managed structures. The page table is a per-process data structure stored in the kernel space of a processes address space, while the frame metadata (`mem_map`) is a global structure used by the paging policy to track which pages are in which frames, along with required metadata. As this simulator is for a single process, both of these are contained in `mmu` for simplicity.
 
-### evicted_page struct
+#### frame entry
 
-The `evicted_page` struct is used as a record of an evicted page.
-
-```c
+```c 
 typedef struct {
-	int vpn;
-	int dirty;
-} evicted_page;
-```
-
-This is not relating to a page in memory, but rather a page that was in memory but has since been evicted. It is returned via `replacePage()` to inform the caller of what has occurred as a result of the page swap.
-
-`replacePage()` needs to return two pieces of information:
-1. which page was evicted - used for debug mode and observability  
-2. if it was a dirty page - to update `disk_writes` 
-
-### frame_entry struct
-
-The `frame_entry` struct is an object that describes the state of a single physical frame in memory.
-
-```c
-typedef struct {
-	int vpn; // which page is in this frame, -1 if free
-	int dirty; // 0 or 1 for clean or dirty
-	int access_time; // LRU timestamp
-	int ref; // clock ref bit
+  int vpn;   // which page is in this frame, -1 if free
+  int dirty; // if the frame has been written to, 0 or 1 for clean or dirty
+  int access_time; // simple LRU timestamp
+  int ref;         // clock ref bit
+  lru_node node;   // each frame has a DLL node
 } frame_entry;
 ```
+`frame_entry` is a hidden struct that represents a physical frame (PFN) in RAM. This struct also contains the metadata (state) for a given physical frame. The simulator has fields for the metadata required for all policies, e.g. `access_time` for simple LRU or `ref` for clock variants. The `mode` field within `mmu` is used to ensure that only the relevant fields are updated. A real OS would have a single paging policy in place, and therefore only have the fields required.
 
-This represents a physical frame (PFN) in RAM, and all the metadata associated with it, which is useful for the replacement algorithm. The simulator tracks metadata needed by multiple policies, e.g. LRU uses  `access_time` and the clock algorithms use `ref`. A real OS would not necessarily track all of this simultaneously if only one policy were in use.
+By having `lru_node node` within `frame_entry`, the DLL node (for advanced LRU) is embedded directly into the frame metadata as opposed to some other allocation. This means that the `lru_node` for frame `f` is obtained through `mmu->frame_data[f].node`. So, given a PFN the node in the DLL for advanced LRU is reachable in O(1).
 
-In addition to this struct, memory is modeled via `page_table` (contained in MMU). This is a linear page table, that maps VPN to PFN. 
+`mmu->frame_data` is indexed by PFN, it is the inverse of `mmu->page_table`.
+- `page_table[vpn]` answers "is this virtual page in memory, and if so what frame?"
+- `frame_data[pfn]` answers "what page is in this frame, and what is its state?"
 
-The index of `frame_entry` and `page_table` are different:
+#### LRU node
 
-- The `page_table` index is a VPN, with the content being them physical frame. `mmu->page_table[VPN] = PFN`, or `-1` if the virtual page is not in memory.
+```c 
+typedef struct lru_node {
+  struct lru_node *prev;
+  struct lru_node *next;
+  int frame; // PFN this node belongs to
+} lru_node;
+```
+Each node represents one physical frame in the LRU DLL. The `frame` field stores the PFN so that when the eviction path reaches the tail node, it can obtain the victim PFN in O(1) without a reverse lookup. Nodes are not separate heap allocations, each `lru_node` is embedded directly inside its corresponding `frame_entry` meaning that the node and its frame metadata are co-located.  
 
-- `frame_entry` index is the physical frame, and the content is metadata about that frame. 
 
-- `page_table` used for : I have this VPN, what frame is it in?
+#### LRU tracker
 
-- `frame_entry` used for: for a given physical frame, what is in it? Is the page in this frame dirty? When was it last accessed?
+```c 
+typedef struct {
+  lru_node *head; // most recently used
+  lru_node *tail; // least recently used, evicted first
+} lru_tracker;
 
-We need `page_table` to see if a page is in memory or not and we need the `frame_table` as replacement policies evict a page from a frame - so need to track metadata with a given frame.
-
-### createMMU()
-
-`createMMU()` initialise simulator state for a machine with `frames` physical frames. Returns 0 on success, -1 on allocation failure. Calling `createMMU()` allocates memory on the heap. This memory should be freed during normal shutdown and is essential if the code is reused in a long running process or driver that runs multiple simulations.
-
-`createMMU()` calls `memset()` to zero initialise all fields within the struct, and then only update required fields. 
-
-```c
-int createMMU(mmu *mmu, int frames) {
-  memset(mmu, 0, sizeof(*mmu));
-
-  mmu->numFrames = frames;
-
-  mmu->page_table = (int *)malloc(NUM_PAGES * sizeof(int));
-  mmu->frame_data = (frame_entry *)calloc(frames, sizeof(frame_entry));
-
-  if (!mmu->page_table || !mmu->frame_data) {
-    free(mmu->frame_data);
-    free(mmu->page_table);
-    return -1;
-  }
-
-  for (int i = 0; i < (int)NUM_PAGES; i++) {
-    mmu->page_table[i] = -1;
-  }
-  for (int f = 0; f < frames; f++) {
-    mmu->frame_data[f].vpn = -1;
-  }
-  return 0;
-}
 ```
 
-The simulator models a 32-bit virtual address space with fixed 4 KB pages. So, there are  $2^{20}$ pages. Therefore, allocate all of these possible mappings in the linear page table. Initialise the value of each page table entry to -1 as no pages are in memory initially.
+Owns the head and tail pointers for the DLL. This list is maintained in access order, with head being the MRU frame and tail being the LRU. Eviction always occurs from the tail. A hit moves the node from its current position to head and re-links the list as appropriate. These are both O(1) operations.
 
-Similarly, set `vpn` entries in `frame_data` array to -1, with other fields within `frame_data` being set to zero by calloc - as required. `malloc()` used for `page_table` as after initiliasing immediately setting all values to -1, no need to initialise to 0 with `calloc()`.
+#### evicted page
 
-`createMMU()` is called once, at the start of `main()`, once all command line arguments have been successfully parsed.
+```c 
+typedef struct {
+  int vpn;   // VPN of the evicted page
+  int dirty; // 1 if the page was dirty, 0 if clean
+} evicted_page;
+```
+`evicted_page` is a record of a page that has just been evicted from physical memory. It is a field within `replace_result` that is returned by `replace_page()`. `dirty` tells the caller whether a disk write is required; a dirty eviction increments `disk_writes`, a clean one is simply discarded.
 
-### Design choice, frame_entry and createMMU() refactor
+#### replace result
 
-Initially, didn't have the `frame_entry` struct, as such was maintaining a separate array for each of the fields within `frame_entry`, as shown below. `frame_entry` was then refactored again to be a member of `mmu`.
-
-
-```c
-// OLD IMPLEMENTATION
-int createMMU(int frames) {
-	numFrames = frames;
-	
-	page_table = (int *)calloc(NUM_PAGES, sizeof(int));
-	frame_table = (int *)calloc((size_t)frames, sizeof(int));
-	dirty_bit = (int *)calloc((size_t)frames, sizeof(int));
-	access_time = (int *)calloc((size_t)frames, sizeof(int));
-	recently_used = (int *)calloc((size_t)frames, sizeof(int));
-	
-	if (!page_table || !frame_table || !dirty_bit || !access_time ||
-		!recently_used) {return -1;}
-	
-	for (int i = 0; i < NUM_PAGES; i++) {
-		page_table[i] = -1;
-	}
-	
-	for (int f = 0; f < frames; f++) {
-		frame_table[f] = -1;
-	}
-	
-	return 0;
-}
+```c 
+typedef struct {
+  int new_pfn;
+  evicted_page victim;
+} replace_result;
 ```
 
-### checkInMemory()
+`replace_result` is the return type of `replace_page`. This struct bundles the PFN that the incoming page is loaded into with the metadata of the page which was just evicted.
 
-`checkInMemory()`  determines if a given VPN is in memory or not. It returns the corresponding PFN if present, or -1 if not.
+### API 
 
-On hit, it updates per-frame metadata used by replacement policies:
-- LRU: updates the last-access timestamp
-- clock: sets the reference bit
+#### create_mmu()
 
-```c
-int checkInMemory(mmu *mmu, int vpn) {
-  int result = mmu->page_table[vpn];
+```c 
+mmu * create_MMU(int frames, enum repl mode);
+```
+`create_MMU` allocates and initialises all simulator state for a machine with `frames` physical frames which uses the replacement policy specified by `mode`. Returns a `mmu *` on success and `NULL` on failure. The returned pointer is to be passed to `destroy_MMU()` by the caller when the simulation is complete. 
 
-  if (result != -1) {
-    mmu->frame_data[result].access_time = mmu->time++; // LRU
-    mmu->frame_data[result].ref = 1;                   // clock
-  }
-  return result;
-}
+`create_MMU()` uses `memset()` to zero initialise the `mmu` struct, then explicitly set fields that require a non-zero initial value:
+- `page_table` entries are set to `-1` to indicate that each PFN has no virtual page initially. 
+- `frame_data[f].vpn` is set to `-1`, as above all frames are initially free.
+- `frame_data[f].node.frame` - each embedded `lru_node` stores its own PFN so that eviction can recover the PFN from the node in O(1) without a reverse lookup.
+- `mode` is stored so that `check_in_memory()` and `allocate_frame()` updates only the relevant metadata per access without needing the policy passed as an argument on every call. 
+
+`malloc()` is used for `page_table` rather than `calloc()` as all entries are immediately overwritten with `-1`. `calloc()` is used for `frame_data` as most fields correctly start with `0`; only `vpn` and `node.frame` need to be initialised explicitly.
+
+If any allocation fails, memory is freed appropiately before returning `NULL`, ensuring no partial heap allocation. 
+
+The simulator models a 32-bit virtual address space with 4 KB pages, so there are $2^{20}$ possible virtual pages. `page_table` allocates all of these entries upfront in a linear array.
+
+#### destroy_mmu()
+
+```c 
+void destory_MMU()(mmu *mmu_ptr);
 ```
 
-`checkInMemory()` is called as the first step of each memory access. 
+Frees all heap memory owned by the `mmu`, i.e. `frame_data`, `page_table`, and the `mmu` struct itself. Both pointer fields are set to `NULL` after freeing as a defensive measure against use-after-free. The caller should not access mmu_ptr after this call.
 
-### allocateFrame()
+#### check_in_memory()
 
-In this simulator, we assume physical memory starts empty. So, we allocate free frames sequentially (PFN: 0, 1, 2, …) until physical memory is full, i.e. use `allocateFrame()` until memory is full and then we need to start using the specified page replacement policy. 
+``` c
+int check_in_memory(mmu *mmu_ptr, int vpn);
+```
+Checks if the virtual page is in physical memory, returning the PFN if present or `-1` on a page fault. This is the first step of every memory access.
 
-```c
-int allocateFrame(mmu *mmu, int vpn) {
-  int pfn = mmu->next_frame++;
-  mmu->page_table[vpn] = pfn;
+On hit, updates the per-frame metadata relevant to the policy:
+- `lru_simple` updates `access_time` for the frame. 
+- `lru_advanced` moves the frames embedded `lru_node` to the head of the DLL via `lru_move_existing_node_head()`. 
+- `_clock` and `_clean_clock` sets the reference bit to `1`.
+- `fifo` and `random` has no metadata to update on hit. 
 
-  mmu->frame_data[pfn].vpn = vpn;
-  mmu->frame_data[pfn].dirty = 0;
-  mmu->frame_data[pfn].access_time = mmu->time++;
-  mmu->frame_data[pfn].ref = 1;
+On a miss, the caller is responsible for servicing the fault by calling either `allocate_frame()` if free frames remain or `replace_page()` if memory is full. 
 
-  return pfn;
-}
+#### allocate_frame()
+
+```c 
+int allocate_frame(mmu *mmu_ptr, int vpn);
+```
+Places `vpn` into the next free (sequentail) physical frame and returns the PFN that was assigned. Only valid while free frames remain. `has_free_frames()` should be called first to verify this. Once all frames are occupied, `replace_page()` should be used instead.
+
+Frames are assigned sequentially from `0` to `numFrames - 1` via `next_frame`, which is incremented on each call. This works as physical memory starts empty and frames are filled in order before any eviction occurs.
+
+On allocation the following metadata is initialised for the frame:
+
+- `vpn` set to the incoming virtual page
+- `dirty` set to 0, the page is clean on load
+- `access_time` set to the current timestamp for `lru_simple`
+- `ref` set to 1, the page is considered recently used for clock variants
+- `lru_node` pushed to the head of the DLL via `lru_new_node_push_head()`, if the active policy is `lru_advanced`
+
+The return PFN is used by the caller to mark the frame dirty if the access that triggered the allocation was a write. 
+
+#### replace_page()
+
+```c 
+replace_result replace_page(mmu *mmu_ptr, int vpn);
 ```
 
-`int next_frame` is tracked inside the mmu struct, to internally determine which next sequentail frame is free. In the main loop:
+Called when physical memory is full so a page must be evicted from memory to enable the new page to be loaded. Victim is selected in accordance to the policy chosen for this invocation of the process. This page is evicted with the latest VPN access being loaded into the frame. Returns`replace_result` that contains the PFN that the page was loaded into and metadata of the evicted page.
 
-```c
-// ...
- if (mmu.next_frame < mmu.numFrames) {
-        pfn = allocateFrame(&mmu, vpn);
-} else {
-	Pvictim = replacePage(&mmu, vpn, replace, &pfn);
-// ....
-```
+`victim_frame` is initialised to `-1` as a guard. If the `victim_frame` value is still set to `-1` after executing the policy an error has occurred. Simulator calls `exit()` with an appropriate error message. This should never occur in correct execution.
 
-`allocateFrame()` simply places the vpn into the next free frame, and updates the metadata within `mmu->frame_data`. 
+Regardless of the policy, after selecting a victim: 
+1. The evicted page's `vpn` and `dirty` status are recorded into the returned `replace_result`.
+2. The victim's `vpn` is marked as not present in memory, i.e. `page_table[victim_vpn] = -1`
+3. Incoming `vpn` is mapped into the victim frame, i.e. `page_table[incoming_vpn] = victim_frame`
+4. Frame metadata is reset.
 
-`allocateFrame()` returns the pfn that was just used to store the vpn, so that after calling we can inspect if we have performed a write operation on the page. If so we mark the page as dirty so that we know we have to save it to disk when replacing the page.
+##### LRU simple
+Scans all frames to find the page with the lowest `access_time`. O(n) per eviction. Simple to implement, but scales poorly with frame count.
 
-```c
-if (pfn != -1 && rw == 'W') {
-	mmu.frame_data[pfn].dirty = 1;
-}
-```
+##### LRU advanced
 
-Note that `pfn != -1` part is a defensive guard. `pfn == -1` indicates a page fault, which should have already been serviced via `allocateFrame()` in the case where there are still free frames in memory, or by `replacePage()` in the case where we need to swap a page. For execution to reach this part of the code with a `pfn == -1` is a bug we are protecting against here.
+Uses a DLL to store frames in access order, with the head being the MRU frame and the tail being the LRU frame. So the tail is always the eviction candidate, its frame field gives the victim PFN directly in O(1). The tail is then unlinked. 
 
-Regardless:
+Rather than freeing the victim node and allocating a new one for the incoming page, the same node is reused in place. The incoming vpn is written into the victim frame and the node is pushed to the head via `lru_new_node_push_head()`, representing the newly loaded page as the MRU. This avoids any heap allocation during eviction.
 
-- If the first access after loading is a read, the page is still identical to what’s on disk so it’s clean, so if you evict it later you can just discard it.
+On hit, `lru_move_existing_node_head` moves the accessed frame's node from its current position to the head, maintaining correct access order. The node is unlinked from its current position and relinked at the head. This is O(1) because each node has a `prev` and `next` pointer so relinking doesn't require scanning. 
 
-- If the first access after loading is a write, you’ve modified the in-memory copy so it’s dirty, so if you evict it later you must write it back, or we would lose the change
 
-### replacePage()
+##### Random 
 
-`replacePage()` perform page replacement when memory is full:
-- selects a victim frame based on the specified replacement mode
-- evicts a page from the frame, and places the new vpn into that frame. 
-- returns metadata about the evicted page
-- writes the pfn for the new page into new_frame
-
-`victim_frame` is the pfn that we are swapping a page into. Initialise to -1 as a guard. Before doing any page swaps if `victim_frame < 0` throw an error. 
-
-#### LRU
-
-LRU uses a simple O(n) scan through the entire array as this was simple to implement. Looked briefly at implementing a more realistic LRU using a doubly linked list and a hashamp, but opted to leave this for a later refactor. 
-
-The doubly linked list is used to store pages in access order, the head being the most recently used and tail being least recently used. 
-- Evict from the tail, so constant time O(1).
-- Cache hit just moves that node to the front. Doubly linked list, so relink in place, constant time O(1)
-
-Hashmap is to save scanning through the entire linked list for a page, key is the VPN and value is a pointer to the node. 
-
-I chose the simplistic array scan approach over performance here as correctness and clarity matter more for a simulator.
-
-#### Random
-
-RAND needs to pick a victim frame uniformly at random from within  `[0, numFrames-1]`.  Every frame needs to have the same probability of selection for it to be truly random.
+Random needs to pick a victim frame uniformly at random from within  `[0, numFrames-1]`.Every frame needs to have the same probability of selection for it to be truly random.
 
 Initially had:
 
@@ -335,36 +289,26 @@ Back to the implementation within memsim!
 
 **RAND summary:** The policy selects a victim frame uniformly at random. Rather than using `rand() % numFrames`, which introduces modulo bias when the random number range is not evenly divisible, the implementation uses rejection sampling. Random values greater than or equal to a computed `limit` are discarded, ensuring that the remaining values map evenly onto frame indices and produce a truly uniform distribution.
 
-#### FIFO
+##### FIFO
 
-Evict the page that has been resident in memory the longest.  `fifo_hand` is a circular pointer over frames. It always points to the next frame to evict, it wraps back to 0 once we have hit `numFrames`. This works because we are sequentially storing pages in frames. 
+Evicts the frame pointed to by fifo_hand and advances the hand by one. The hand wraps circularly over [0, numFrames - 1]. This works correctly because frames are filled sequentially during initial allocation, so the oldest resident page is always at the current hand position.
 
-#### Clock 
+##### Clock
 
 Clock is an approximation of LRU that avoids maintaining a data structure for full access order. Recently used pages are given a second chance before eviction, via a reference bit for each frame. The bit is set to 1 whenever the page is accessed, and cleared by the algorithm when it searches for a page to remove. 
 
-Clock is implemented similarly to FIFO in that a pointer acts as an iterator over the frames in a circular fashion.
-
-```c
-else if (mode == _clock) {
-	while (frame_data[clock_hand].ref == 1) {
-		frame_data[clock_hand].ref = 0;
-		clock_hand = (clock_hand + 1) % numFrames;
-	}
-	victim_frame = clock_hand;
-	clock_hand = (clock_hand + 1) % numFrames;
-}
-```
+Clock is implemented similarly to FIFO in that a pointer acts as an iterator over the frames in a circular fashion, and operates as follows:
 
 1. The algorithm inspects the frame pointed to by `clock_hand`
 2. If the frames reference bit is set (1), clear it and advance to next frame, repeating until a frame with reference bit of 0 is found.
 3. At worst, a full cycle has occurred. Regardless, we have found the frame which contains the page to evict.
 
-Pages accessed recently are protected from eviction as their reference bit is set to 1. Worst-case time per eviction is O(numFrames)  but average behavior is efficient.This behavior closely approximates LRU at significantly lower implementation cost.
+Pages accessed recently are protected from eviction as their reference bit is set to 1. Worst-case time per eviction is O(numFrames) but average behavior is efficient. This behavior closely approximates LRU at significantly lower implementation cost.
 
-#### Clean clock
+##### Clean clock
 
-Clean clock is an extension of clock, that prefers to evict clean pages over dirty when selecting a victim with the goal of reducing writes back to disk. The basic clock implementation would evict the first page that is found with reference bit of 0, even if it was dirty - which has the overhead of writing to disk. 
+
+Clean clock is an extension of clock, that prefers to evict clean pages over dirty when selecting a victim. The goal of this is to reduce the number of writes back to disk. The basic clock implementation would evict the first page that is found with reference bit of 0, even if it was dirty - which has the overhead of writing to disk. 
 
 Clean clock may require two passes:
 
@@ -372,61 +316,76 @@ Clean clock may require two passes:
 
 **Pass 2** is a safety mechanism, in the case where all frames are dirty repeat the simple clock, evict the first page with ref bit set to 0.
 
-#### Execution after selecting the victim frame
+#### has_free_frames()
 
-Regardless of what policy is selected, as mentioned above a check occurs first to ensure that a valid frame has been selected. Then the following occurs:
+```c 
+int has_free_frames(mmu *mmu_ptr);
+```
+Returns `1` if free frames remain, comparing `next_frame` against `numFrames`. Returns `-1` if there are no free frames. Called in the loop before each page fault to determine if `allocate_frame()` or `replace_page()` is to be used.
 
-1. Populate a `victim` object with the vpn and dirty status from the selected frame, to track disk writes. Currently not using the return vpn from replacePage() anywhere except for debug mode.
-2. Mark the victim vpn as not being present in memory, i.e. set page table value at vpn index to -1.
-3. Map the incoming vpn into the selected frame
-4. Reset the meta data for the frame
+#### mark_dirty()
 
-The last thing we do is:
-
-```c
-if (new_frame) {
-	*new_frame = victim_frame;
-}
+```c 
+void mark_dirty(mmu *mmu_ptr, int pfn);
 ```
 
-Firstly, the use of the if statement is so `replacePage()` can  safely be called without requesting the PFN of the newly loaded page, preventing NULL dereference and making the API more flexible. 
+Sets the `dirty` bit to `1` for the frame at `pfn`. Called after any write access.
 
-The purpose of updating `*new_frame` is so that after the page has been placed into a new frame we can set this frames bit to dirty if we have a write, i.e.:
+#### lru_new_node_push_head()
 
-```c
-if (pfn != -1 && rw == 'W') {
-	frame_data[pfn].dirty = 1;
-}
+```c 
+static void lru_new_node_push_head(lru_tracker * lru, lru_node *node);
 ```
 
-where `pfn` is passed in the argument as `*new_frame` 
+Inserts a node at the head of the DLL. Only safe to call when the node is not already in the list. Calling on an existing node would corrupt the list as it would not unlink the node from its current position. Used in two places:
+- `allocate_frame()` when a page is loaded into a free frame for the first time.
+- `replace_page()` when a victim node is reused for the incoming page, after eviction.
 
-## memsim main execution
+The new node's `prev` is set to `NULL` as it is the head. Its `next` is set to the previous head, which may be `NULL` if the list was empty. If the previous head was not `NULL`, its `prev` is updated to point to the new node. `lru->head` is then updated to the new node. If `lru->tail` is `NULL` the list was previously empty, so `lru->tail` is set to the new node making head and tail the same; i.e. the DLL has only one element.
+
+#### lru_move_existing_node_head()
+
+```c 
+static void lru_move_existing_node_head(lru_tracker * lru, lru_node *node);
+```
+
+Moves an existing node from its current position in the DLL to head. Called by `check_in_memory()` on every cache hit for advanced LRU to maintain correct access order. Safe to call only if the node is already in the list. Handles three cases:
+
+1. Already at head. If `lru->head == node` then return immediately. 
+2. At the tail. If the node has `prev` but no `next` (i.e. `NULL`) unlink by setting `lru->tail` to `node->prev` and clearing its `next` pointer, then insert at head.
+3. In the middle. Unlink by stitching the surrounding nodes together, then insert at head. 
+
+In the non-trivial cases, after unlinking, the node is inserted at the head by setting `node->prev` to `NULL` `node->next` to the current head, updating `lru->head->prev` to the node, and lastly setting `lru->head` to the node.
+
+
+
+### memsim main execution
 
 **1. Argument parsing**
 
 `main()` expects the command line arguments as shown in the example below, and detailed at the top of this README.
 
-`./memsim <tracefile> <frames> <policy> <quiet|debug> [seed]
+`./memsim <tracefile> <frames> <policy> [-debug] [seed]
 `
 
 **2. Simulator initialisation**
 
-- `createMMU()` called, allocates all simulator data structures on the heap. If allocation fails, program exits
+- `create_MMU()` called, allocates all simulator data structures on the heap. If allocation fails, program exits
 
 **3. Trace loop**
 For each memory access:
 1. Extract VPN from address
-2. Check residency with `checkInMemory()`
+2. Check residency with `check_in_memory()`
 3. On page fault:
    - Allocate a free frame, or
    - Replace a page using the selected policy
 4. If the access is a write, mark the frame dirty
 5. Update counters and optional debug output
  
-
-
-
-
-
+### Change log
+The following list details the major changes made:
+- `mmu` struct made opaque, implementation details hidden in `memsim.c`
+- `create_MMU()` refactored to return `mmu *` (heap allocated) rather than taking a pointer parameter
+- replace_page() returns a replace_result struct containing both the new PFN and evicted page metadata, replacing the previous design which mixed a return value for the victim page with an out-parameter for the new frame number
+- Added `has_free_frames()` and `mark_dirty()` accessor functions to support the opaque type
 

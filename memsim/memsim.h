@@ -22,32 +22,32 @@ typedef struct {
 typedef struct mmu mmu;
 
 // Replacement policies supportd by the simulator
-enum repl { _random, fifo, lru, _clock, _clock_clean };
+enum repl { _random, fifo, lru_simple, lru, _clock, _clock_clean };
 
 // Core simulator API
 
 // Initialise simulator state for a machine with 'frames' physical frames.
 // Returns a pointer to the allocated mmu on success, NULL on allocation
 // failure.
-mmu *createMMU(int frames);
+mmu *create_MMU(int frames, enum repl mode);
 
 // Free memory allocated by createMMU().
-void destroyMMU(mmu *mmu_ptr);
+void destroy_MMU(mmu *mmu_ptr);
 
 // Returns PFN if 'vpn' is in memory, or -1 if not (page fault).
 // On a hit, updates metadata (LRU timestamp and CLOCK ref-bit).
-int checkInMemory(mmu *mmu_ptr, int vpn);
+int check_in_memory(mmu *mmu_ptr, int vpn);
 
 // Allocate the next free frame to 'vpn' (only valid while free frames remain).
 // Returns PFN assigned to this VPN, needed so that the frame can be marked as
 // dirty if appropriate.
-int allocateFrame(mmu *mmu_ptr, int vpn);
+int allocate_frame(mmu *mmu_ptr, int vpn);
 
 // Perform page replacement for 'vpn' when memory is full.
 // Selects a victim frame based on 'mode'
 // Evicts the resident page (if any) and places 'vpn' into that frame
 // Returns metadata about the evicted page
-replace_result replacePage(mmu *mmu, int vpn, enum repl mode);
+replace_result replace_page(mmu *mmu, int vpn);
 
 // Returns 1 if free frames remain, -1 if all frames are occupied.
 int has_free_frames(mmu *mmu_ptr);
