@@ -108,7 +108,7 @@ int has_free_frames(mmu *mmu_ptr) {
   if (mmu_ptr->next_frame < mmu_ptr->numFrames) {
     return 1;
   }
-  return -1;
+  return 0;
 }
 
 void mark_dirty(mmu *mmu_ptr, int pfn) { mmu_ptr->frame_data[pfn].dirty = 1; }

@@ -49,7 +49,7 @@ int allocate_frame(mmu *mmu_ptr, int vpn);
 // Returns metadata about the evicted page
 replace_result replace_page(mmu *mmu, int vpn);
 
-// Returns 1 if free frames remain, -1 if all frames are occupied.
+// Returns 1 if free frames remain, 0 if all frames are occupied.
 int has_free_frames(mmu *mmu_ptr);
 
 // Marks the frame at 'pfn' as dirty, indicating it has been written to.
