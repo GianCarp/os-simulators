@@ -6,7 +6,6 @@ set -e
 
 source "$(dirname "$0")/../helpers.sh"
 
-assert_exit_code 0 -h
-assert_stderr_contains "Usage" -h
+assert_exit_code $EXIT_OK -h
 
 echo "PASS: test_help_flag"

@@ -35,14 +35,30 @@ static int is_uint(const char *s) {
 // Page size fixed at 4 KB => 12-bit offset
 static const int pageoffset = 12;
 
+// Numbering starts at 2 because 1 is reserved for an unexpected internal
+// failure. memsim.c cannot see this enum and should not have to, so its
+// [BUG] guard in replace_page() calls exit(EXIT_FAILURE), which glibc
+// defines as 1. Reserving 1 keeps that path from colliding with a real code.
+enum exit_code {
+  EXIT_OK = 0,
+  EXIT_USAGE = 2,          // argc outside [4, 7]
+  EXIT_TRACE_OPEN = 3,     // tracefile could not be opened
+  EXIT_FRAMES_FORMAT = 4,  // frame count not a base-10 unsigned
+  EXIT_FRAMES_RANGE = 5,   // frame count below 1
+  EXIT_BAD_POLICY = 6,     // unrecognised policy name
+  EXIT_SEED_MISSING = 7,   // -seed given with no value
+  EXIT_SEED_FORMAT = 8,    // -seed value not a base-10 unsigned
+  EXIT_UNKNOWN_OPTION = 9, // unrecognised flag
+  EXIT_NO_MEMORY = 10,     // create_MMU() allocation failed
+  EXIT_TRACE_FORMAT = 11,  // access line is neither R nor W
+};
+
 int main(int argc, char *argv[]) {
 
-  char *tracename;   // path to tracefile
-  uint32_t address;  // full address, shift by 12 bits to get the vpn
-  int vpn;           // vpn derived from address
-  int pfn;           // pfn the page currently resides in
-  int memory_access; // stores the return value of fscanf(), should be 2 to
-                     // indicate an address and R/W instruction
+  char *tracename;  // path to tracefile
+  uint32_t address; // full address, shift by 12 bits to get the vpn
+  int vpn;          // vpn derived from address
+  int pfn;          // pfn the page currently resides in
   char rw;
 
   int no_events = 0;
@@ -61,33 +77,33 @@ int main(int argc, char *argv[]) {
 
   if (argc >= 2 && strcmp(argv[1], "-h") == 0) {
     usage(argv[0]);
-    return EXIT_SUCCESS;
+    return EXIT_OK;
   }
 
   // Min args is 4, max is 7
   if (argc < 4 || argc > 7) {
     usage(argv[0]);
-    return EXIT_FAILURE;
+    return EXIT_USAGE;
   }
 
   tracename = argv[1];
   trace = fopen(tracename, "r");
   if (trace == NULL) {
     fprintf(stderr, "Cannot open trace file %s\n", tracename);
-    return EXIT_FAILURE;
+    return EXIT_TRACE_OPEN;
   }
 
   if (!is_uint(argv[2])) {
     fprintf(stderr, "Invalid number of frames given\n");
     usage(argv[0]);
     fclose(trace);
-    return EXIT_FAILURE;
+    return EXIT_FRAMES_FORMAT;
   }
   int frames = atoi(argv[2]);
   if (frames < 1) {
     fprintf(stderr, "Frame number must be at least 1\n");
     fclose(trace);
-    return EXIT_FAILURE;
+    return EXIT_FRAMES_RANGE;
   }
 
   if (strcmp(argv[3], "lru-simple") == 0) {
@@ -106,7 +122,7 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "Replacement algorithm must be rand, fifo, lru-simple, "
                     "lru-advanced, clock, or clean-clock\n");
     fclose(trace);
-    return EXIT_FAILURE;
+    return EXIT_BAD_POLICY;
   }
 
   // Parse optional flags starting at argv[4]
@@ -118,13 +134,13 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "-seed requires a value\n");
         usage(argv[0]);
         fclose(trace);
-        return EXIT_FAILURE;
+        return EXIT_SEED_MISSING;
       }
       if (!is_uint(argv[i + 1])) {
         fprintf(stderr, "Invalid seed given\n");
         usage(argv[0]);
         fclose(trace);
-        return EXIT_FAILURE;
+        return EXIT_SEED_FORMAT;
       }
       seed = atoi(argv[i + 1]);
       i++; // consume the seed value
@@ -132,7 +148,7 @@ int main(int argc, char *argv[]) {
       fprintf(stderr, "Unknown option: %s\n", argv[i]);
       usage(argv[0]);
       fclose(trace);
-      return EXIT_FAILURE;
+      return EXIT_UNKNOWN_OPTION;
     }
   }
 
@@ -146,11 +162,30 @@ int main(int argc, char *argv[]) {
   if (mmu_ptr == NULL) {
     fprintf(stderr, "Cannot create MMU\n");
     fclose(trace);
-    return EXIT_FAILURE;
+    return EXIT_NO_MEMORY;
   }
 
-  memory_access = fscanf(trace, "%x %c", &address, &rw);
-  while (memory_access == 2) {
+  // Read a line at a time rather than scanning the stream directly. With
+  // fscanf("%x %c") the space in the format skips all whitespace including
+  // newlines, so a line missing its operation character silently consumes the
+  // first digit of the next address. Reading line by line keeps each record
+  // self-contained and makes the reported line number accurate.
+  char line[64];
+  while (fgets(line, sizeof(line), trace) != NULL) {
+    no_events++;
+    line[strcspn(line, "\n")] = '\0';
+
+    // Validate before use. A conversion failure here previously ended the
+    // loop as though the file had finished, so a corrupt trace exited 0 and
+    // reported statistics gathered from only part of the file.
+    if (sscanf(line, "%x %c", &address, &rw) != 2 || (rw != 'R' && rw != 'W')) {
+      fprintf(stderr, "line %d: expected <hex address> <R|W>, got \"%s\"\n",
+              no_events, line);
+      destroy_MMU(mmu_ptr);
+      fclose(trace);
+      return EXIT_TRACE_FORMAT;
+    }
+
     vpn = (int)(address >> pageoffset);
     pfn = check_in_memory(mmu_ptr, vpn);
 
@@ -183,14 +218,6 @@ int main(int argc, char *argv[]) {
       mark_dirty(mmu_ptr, pfn);
     }
 
-    if (rw != 'R' && rw != 'W') {
-      fprintf(stderr, "Badly formatted file. Error on line %d\n",
-              no_events + 1);
-      destroy_MMU(mmu_ptr);
-      fclose(trace);
-      return EXIT_FAILURE;
-    }
-
     if (debugmode) {
       if (rw == 'R') {
         printf("reading    %8d\n", vpn);
@@ -200,8 +227,6 @@ int main(int argc, char *argv[]) {
       printf("\n");
       usleep(600000);
     }
-    no_events++;
-    memory_access = fscanf(trace, "%x %c", &address, &rw);
   }
 
   double page_fault_percent = 0.0;
@@ -219,5 +244,5 @@ int main(int argc, char *argv[]) {
   destroy_MMU(mmu_ptr);
   fclose(trace);
 
-  return EXIT_SUCCESS;
+  return EXIT_OK;
 }

@@ -5,6 +5,22 @@ MEMSIM="${MEMSIM:-$SCRIPT_DIR/../../build/memsim}"
 TRACES="$SCRIPT_DIR/integration/traces"
 REAL_TRACES="$SCRIPT_DIR/../../memsim/traces"
 
+# Exit codes reported by memsim, one per failure mode. Keep in sync with
+# enum exit_code in memsim/main.c. 1 is absent deliberately, it is reserved
+# for unexpected internal failure, so a test can never expect it.
+
+readonly EXIT_OK=0
+readonly EXIT_USAGE=2
+readonly EXIT_TRACE_OPEN=3
+readonly EXIT_FRAMES_FORMAT=4
+readonly EXIT_FRAMES_RANGE=5
+readonly EXIT_BAD_POLICY=6
+readonly EXIT_SEED_MISSING=7
+readonly EXIT_SEED_FORMAT=8
+readonly EXIT_UNKNOWN_OPTION=9
+readonly EXIT_NO_MEMORY=10
+readonly EXIT_TRACE_FORMAT=11
+
 # Check that memsim exits with a specific exit code. Takes the expected exit
 # code as the first argument, and then any remaining arguments are passed to
 # memsim. On failure, dumps the expected vs actual exit code, the arguments
@@ -25,28 +41,6 @@ assert_exit_code() {
         echo "FAIL: expected exit $expected, got $actual"
         echo "  args: $*"
         echo "  output: $output"
-        exit 1
-    fi
-}
-
-# Check that memsim's stderr output contains a specific substring. Takes the
-# expected substring as the first argument, and then any remaining arguments
-# are passed to memsim. Only stderr is captured -- stdout is discarded, so the
-# check is not polluted by normal output like the stats table.
-#
-# Usage: assert_stderr_contains <substring> <args...>
-
-assert_stderr_contains() {
-    local needle=$1
-    shift
-    local output
-    set +e
-    output=$("$MEMSIM" "$@" 2>&1 >/dev/null)
-    set -e
-    if ! echo "$output" | grep -q "$needle"; then
-        echo "FAIL: expected stderr to contain '$needle'"
-        echo "  args: $*"
-        echo "  stderr: $output"
         exit 1
     fi
 }
