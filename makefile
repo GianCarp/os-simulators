@@ -41,7 +41,8 @@ $(SCHEDSIM): \
 	schedsim/src/main.c \
 	schedsim/src/schedsim.c \
 	schedsim/src/policies.c \
-	schedsim/src/queue.c | $(BUILD)
+	schedsim/src/queue.c \
+	schedsim/src/args.c | $(BUILD)
 	$(CC) $(CFLAGS) -Ischedsim/include $^ -o $(SCHEDSIM) $(LDFLAGS)
 
 workload_gen: $(WORKLOAD_GEN)
@@ -65,9 +66,11 @@ $(MEMSIM_TEST_BUILD)/test_%: tests/memsim/unit/test_%.c memsim/memsim.c memsim/m
 $(SCHED_TEST_BUILD)/test_%: tests/schedsim/unit/test_%.c \
 	schedsim/src/policies.c \
 	schedsim/src/queue.c \
+	schedsim/src/args.c \
 	schedsim/src/schedsim.c | $(SCHED_TEST_BUILD)
 	$(CC) $(CFLAGS) -Ischedsim/include -Ischedsim/src \
-	  $< schedsim/src/policies.c schedsim/src/queue.c -o $@ -lcmocka
+	  $< schedsim/src/policies.c schedsim/src/queue.c schedsim/src/args.c \
+	  -o $@ -lcmocka
 
 test: memsim schedsim $(MEMSIM_UNIT_TESTS) $(SCHED_UNIT_TESTS)
 	@tests/run_tests.sh
