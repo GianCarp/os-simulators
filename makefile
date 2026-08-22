@@ -72,7 +72,10 @@ $(SCHED_TEST_BUILD)/test_%: tests/schedsim/unit/test_%.c \
 	  $< schedsim/src/policies.c schedsim/src/queue.c schedsim/src/args.c \
 	  -o $@ -lcmocka
 
-test: memsim schedsim $(MEMSIM_UNIT_TESTS) $(SCHED_UNIT_TESTS)
+# The runners refuse to report a result if their build directory is missing,
+# treating it as "never built". Creating both here makes that signal reliable
+# even for a simulator that has no unit tests yet.
+test: memsim schedsim $(MEMSIM_UNIT_TESTS) $(SCHED_UNIT_TESTS) | $(MEMSIM_TEST_BUILD) $(SCHED_TEST_BUILD)
 	@tests/run_tests.sh
 
 test-unit: $(MEMSIM_UNIT_TESTS) $(SCHED_UNIT_TESTS)
