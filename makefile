@@ -3,18 +3,21 @@ CFLAGS  := -std=c11 -Wall -Wextra -O2
 LDFLAGS :=
 
 BUILD := build
-TEST_BUILD := $(BUILD)/tests/memsim
+MEMSIM_TEST_BUILD := $(BUILD)/tests/memsim
+SCHED_TEST_BUILD := $(BUILD)/tests/schedsim
 
 MEMSIM := $(BUILD)/memsim
 SCHEDSIM := $(BUILD)/schedsim
 WORKLOAD_GEN := $(BUILD)/workload_gen
 DRIVER := $(BUILD)/driver
 
-UNIT_TESTS := \
-	$(TEST_BUILD)/test_lru_dll \
-	$(TEST_BUILD)/test_mmu_lifecycle \
-	$(TEST_BUILD)/test_page_operations \
-	$(TEST_BUILD)/test_replace_page
+MEMSIM_UNIT_TESTS := \
+	$(MEMSIM_TEST_BUILD)/test_lru_dll \
+	$(MEMSIM_TEST_BUILD)/test_mmu_lifecycle \
+	$(MEMSIM_TEST_BUILD)/test_page_operations \
+	$(MEMSIM_TEST_BUILD)/test_replace_page
+
+SCHED_UNIT_TESTS :=
 
 .PHONY: all clean memsim schedsim workload_gen driver test test-unit test-integration
 
@@ -23,8 +26,11 @@ all: memsim schedsim workload_gen driver
 $(BUILD):
 	mkdir -p $(BUILD)
 
-$(TEST_BUILD):
-	mkdir -p $(TEST_BUILD)
+$(MEMSIM_TEST_BUILD):
+	mkdir -p $(MEMSIM_TEST_BUILD)
+
+$(SCHED_TEST_BUILD):
+	mkdir -p $(SCHED_TEST_BUILD)
 
 memsim: $(MEMSIM)
 $(MEMSIM): memsim/main.c memsim/memsim.c | $(BUILD)
@@ -48,17 +54,30 @@ $(DRIVER): | $(BUILD)
 
 # tests
 
-$(TEST_BUILD)/test_%: tests/memsim/unit/test_%.c memsim/memsim.c memsim/memsim.h | $(TEST_BUILD)
+$(MEMSIM_TEST_BUILD)/test_%: tests/memsim/unit/test_%.c memsim/memsim.c memsim/memsim.h | $(MEMSIM_TEST_BUILD)
 	$(CC) $(CFLAGS) -Imemsim $< -o $@ -lcmocka
 
-test: memsim $(UNIT_TESTS)
+# schedsim is split across several translation units, so unlike the memsim rule
+# the sources have to be named rather than relying on $<. schedsim.c is a
+# prerequisite but is deliberately kept off the command line: a test that needs
+# its static functions includes it textually, which would clash with a linked
+# copy.
+$(SCHED_TEST_BUILD)/test_%: tests/schedsim/unit/test_%.c \
+	schedsim/src/policies.c \
+	schedsim/src/queue.c \
+	schedsim/src/schedsim.c | $(SCHED_TEST_BUILD)
+	$(CC) $(CFLAGS) -Ischedsim/include -Ischedsim/src \
+	  $< schedsim/src/policies.c schedsim/src/queue.c -o $@ -lcmocka
+
+test: memsim schedsim $(MEMSIM_UNIT_TESTS) $(SCHED_UNIT_TESTS)
 	@tests/run_tests.sh
 
-test-unit: $(UNIT_TESTS)
-	@for t in $(UNIT_TESTS); do $$t; done
+test-unit: $(MEMSIM_UNIT_TESTS) $(SCHED_UNIT_TESTS)
+	@for t in $(MEMSIM_UNIT_TESTS) $(SCHED_UNIT_TESTS); do $$t; done
 
-test-integration: memsim
+test-integration: memsim schedsim
 	@tests/memsim/integration/test_*.sh
+	@tests/schedsim/integration/test_*.sh
 
 clean:
 	rm -rf $(BUILD)
