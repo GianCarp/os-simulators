@@ -69,13 +69,13 @@ void workload_free(workload_t *workload) {
 
 // allocate memory up front for the number of jobs to simulate, re-size as
 // necessary.
-static int populate_workload(FILE *work, workload_t *workload) {
+static enum exit_code populate_workload(FILE *work, workload_t *workload) {
 
   int capacity = 16;
   workload->jobs = (job_t *)malloc(capacity * sizeof(job_t));
   if (workload->jobs == NULL) {
     fprintf(stderr, "Failed to allocate memory in populate_workload().\n");
-    return -1;
+    return EXIT_NO_MEMORY;
   }
 
   workload->num_jobs = 0;
@@ -84,25 +84,53 @@ static int populate_workload(FILE *work, workload_t *workload) {
   int arrival_time;
   int run_time;
 
-  int rc;
+  // Read a line at a time rather than scanning the stream. The spaces in
+  // fscanf("%d %d %d") skip all whitespace including newlines, so a line short
+  // of a field is completed from the next one: "1 0" on one line followed by
+  // "5" on the next parses as one valid job, and the file is accepted as
+  // describing something it does not say. Reading line by line keeps each
+  // record self-contained and makes the reported line number accurate.
+  char line[64];
+  int line_no = 0;
 
-  while ((rc = fscanf(work, "%d %d %d", &id, &arrival_time, &run_time)) == 3) {
+  while (fgets(line, sizeof(line), work) != NULL) {
+    line_no++;
+
+    // fgets writes at most sizeof(line) - 1 characters, so a full buffer with
+    // no newline in it means the line was cut. Left alone the tail comes back
+    // as a record of its own, which is the same splicing this loop exists to
+    // prevent.
+    if (strlen(line) == sizeof(line) - 1 && strchr(line, '\n') == NULL) {
+      fprintf(stderr, "line %d: line too long\n", line_no);
+      workload_free(workload);
+      return EXIT_WORKLOAD_FORMAT;
+    }
+
+    // Formatting the line for error message cleanliness
+    line[strcspn(line, "\n")] = '\0';
+
+    if (sscanf(line, "%d %d %d", &id, &arrival_time, &run_time) != 3) {
+      fprintf(stderr, "line %d: expected <id> <arrival> <run>, got \"%s\"\n",
+              line_no, line);
+      workload_free(workload);
+      return EXIT_WORKLOAD_FORMAT;
+    }
 
     if (id != (workload->num_jobs + 1)) {
       fprintf(stderr, "Bad data: expected id %d but got %d\n",
               workload->num_jobs + 1, id);
       workload_free(workload);
-      return -1;
+      return EXIT_WORKLOAD_FORMAT;
     }
     if (arrival_time < 0) {
       fprintf(stderr, "Bad data: arrival_time must be >= 0 (id = %d)\n", id);
       workload_free(workload);
-      return -1;
+      return EXIT_WORKLOAD_FORMAT;
     }
     if (run_time <= 0) {
       fprintf(stderr, "Bad data: run_time must be > 0 (id = %d)\n", id);
       workload_free(workload);
-      return -1;
+      return EXIT_WORKLOAD_FORMAT;
     }
 
     if (workload->num_jobs == capacity) {
@@ -111,7 +139,7 @@ static int populate_workload(FILE *work, workload_t *workload) {
       if (temp == NULL) {
         fprintf(stderr, "Failed to allocate memory in populate_workload().\n");
         workload_free(workload);
-        return -1;
+        return EXIT_NO_MEMORY;
       }
       workload->jobs = temp;
     }
@@ -123,18 +151,13 @@ static int populate_workload(FILE *work, workload_t *workload) {
     workload->jobs[workload->num_jobs++] = current_job;
   }
 
-  if (rc != EOF) {
-    fprintf(stderr, "Bad data.\n");
-    workload_free(workload);
-    return -1;
-  }
   if (workload->num_jobs == 0) {
     fprintf(stderr, "No jobs found in workload.\n");
     workload_free(workload);
-    return -1;
+    return EXIT_WORKLOAD_EMPTY;
   }
 
-  return 0;
+  return EXIT_OK;
 }
 
 static int compare_jobs_by_arrival(const void *jb1, const void *jb2) {
@@ -160,8 +183,8 @@ static int compare_jobs_by_arrival(const void *jb1, const void *jb2) {
 }
 
 // Load a workload from a file, expected format: <id> <arrival_time> <run_time>.
-// Returns 0 on success, -1 on failure.
-int workload_load(const char *filename, workload_t *workload) {
+// Returns EXIT_OK, or the code identifying why the file was rejected.
+enum exit_code workload_load(const char *filename, workload_t *workload) {
 
   workload->jobs = NULL;
   workload->num_jobs = 0;
@@ -169,19 +192,20 @@ int workload_load(const char *filename, workload_t *workload) {
   FILE *work = fopen(filename, "r");
   if (work == NULL) {
     fprintf(stderr, "Cannot open file %s\n", filename);
-    return -1;
+    return EXIT_WORKLOAD_OPEN;
   }
 
-  if (populate_workload(work, workload) != 0) {
-    fclose(work);
-    fprintf(stderr, "Call to workload_load() failed.\n");
-    return -1;
-  }
+  enum exit_code rc = populate_workload(work, workload);
   fclose(work);
+  if (rc != EXIT_OK) {
+    fprintf(stderr, "Call to workload_load() failed.\n");
+    return rc;
+  }
+
   qsort(workload->jobs, workload->num_jobs, sizeof(job_t),
         compare_jobs_by_arrival);
 
-  return 0;
+  return EXIT_OK;
 }
 
 static job_t *copy_jobs(const workload_t *workload) {

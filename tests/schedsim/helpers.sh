@@ -10,6 +10,13 @@ REAL_WORKLOADS="$SCRIPT_DIR/../../schedsim/workloads"
 # is reserved for unexpected internal failure, so a test can never expect it.
 
 readonly EXIT_OK=0
+readonly EXIT_USAGE=2
+readonly EXIT_BAD_POLICY=3
+readonly EXIT_TIME_SLICE=4
+readonly EXIT_WORKLOAD_OPEN=5
+readonly EXIT_WORKLOAD_FORMAT=6
+readonly EXIT_WORKLOAD_EMPTY=7
+readonly EXIT_NO_MEMORY=8
 
 # Check that schedsim exits with a specific exit code. Takes the expected exit
 # code as the first argument, and then any remaining arguments are passed to

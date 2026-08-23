@@ -19,9 +19,9 @@ typedef struct {
   int help;       // -h was given; no other field is meaningful
 } sched_config_t;
 
-// Parse argv into cfg. Returns 0 on success and -1 on any usage error, having
-// already written a diagnostic and the usage text to stderr. -h is a success,
-// it sets cfg.help and leaves the remaining fields unset.
-int parse_args(int argc, char *argv[], sched_config_t *cfg);
+// Parse argv into cfg. Returns EXIT_OK, or the code identifying the usage
+// error, having already written a diagnostic and the usage text to stderr. -h
+// is a success, it sets cfg.help and leaves the remaining fields unset.
+enum exit_code parse_args(int argc, char *argv[], sched_config_t *cfg);
 
 #endif // ARGS_H

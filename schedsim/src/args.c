@@ -18,6 +18,39 @@ static void usage(const char *prog) {
           prog, prog, prog);
 }
 
+static int is_uint(const char *s) {
+  if (*s == '\0')
+    return 0;
+  for (const char *p = s; *p; p++) {
+    if (*p < '0' || *p > '9')
+      return 0;
+  }
+  return 1;
+}
+
+// Read the --time-slice flag and its value at flag_pos. Deliberately called
+// before the surrounding argc is checked, so that every route to "RR selected
+// but no slice given" reports the same cause. Checking argc first would make
+// the diagnosis depend on whether RR was named directly, listed in --policies,
+// or implied by --all.
+static enum exit_code parse_time_slice(int argc, char *argv[], int flag_pos,
+                                       int *time_slice) {
+  if (argc <= flag_pos + 1 || strcmp(argv[flag_pos], "--time-slice") != 0) {
+    fprintf(stderr, "RR selected: must supply --time-slice N\n");
+    return EXIT_TIME_SLICE;
+  }
+
+  // atoi stops at the first non-digit, so it reads "4x" as 4 and cannot
+  // distinguish "abc" from a genuine 0. is_uint rejects the whole token.
+  if (!is_uint(argv[flag_pos + 1]) || atoi(argv[flag_pos + 1]) <= 0) {
+    fprintf(stderr, "--time-slice must be a positive integer\n");
+    return EXIT_TIME_SLICE;
+  }
+
+  *time_slice = atoi(argv[flag_pos + 1]);
+  return EXIT_OK;
+}
+
 static int parse_policy_list(const char *list, enum sched_policy *policies,
                              int *num_policies) {
   char buf[128];
@@ -66,7 +99,7 @@ static int parse_policy_list(const char *list, enum sched_policy *policies,
   return 0;
 }
 
-int parse_args(int argc, char *argv[], sched_config_t *cfg) {
+enum exit_code parse_args(int argc, char *argv[], sched_config_t *cfg) {
   cfg->workload_path = NULL;
   cfg->num_policies = 0;
   cfg->time_slice = -1;
@@ -75,26 +108,26 @@ int parse_args(int argc, char *argv[], sched_config_t *cfg) {
   if (argc >= 2 && (strcmp(argv[1], "-h") == 0)) {
     usage(argv[0]);
     cfg->help = 1;
-    return 0;
+    return EXIT_OK;
   }
 
   if (argc < 3 || argc > 6) {
     usage(argv[0]);
-    return -1;
+    return EXIT_USAGE;
   }
 
   cfg->workload_path = argv[1];
 
   if (strcmp(argv[2], "--all") == 0) {
-    if (argc != 5 || strcmp(argv[3], "--time-slice") != 0) {
+    enum exit_code rc = parse_time_slice(argc, argv, 3, &cfg->time_slice);
+    if (rc != EXIT_OK) {
       usage(argv[0]);
-      return -1;
+      return rc;
     }
 
-    cfg->time_slice = atoi(argv[4]);
-    if (cfg->time_slice <= 0) {
+    if (argc != 5) {
       usage(argv[0]);
-      return -1;
+      return EXIT_USAGE;
     }
 
     cfg->policies[0] = FCFS;
@@ -104,16 +137,16 @@ int parse_args(int argc, char *argv[], sched_config_t *cfg) {
 
   } else if (strcmp(argv[2], "--policies") == 0) {
 
-    if (argc != 4 && argc != 6) {
+    if (argc < 4) {
       usage(argv[0]);
-      return -1;
+      return EXIT_USAGE;
     }
 
     const char *list = argv[3];
 
     if (parse_policy_list(list, cfg->policies, &cfg->num_policies) != 0) {
       usage(argv[0]);
-      return -1;
+      return EXIT_BAD_POLICY;
     }
 
     // After parsing, check whether RR is included
@@ -126,26 +159,22 @@ int parse_args(int argc, char *argv[], sched_config_t *cfg) {
     }
 
     if (includes_rr) {
-      if (argc != 6 || strcmp(argv[4], "--time-slice") != 0) {
-        fprintf(stderr, "RR selected: must supply --time-slice N\n");
+      enum exit_code rc = parse_time_slice(argc, argv, 4, &cfg->time_slice);
+      if (rc != EXIT_OK) {
         usage(argv[0]);
-        return -1;
+        return rc;
       }
 
-      cfg->time_slice = atoi(argv[5]);
-      if (cfg->time_slice <= 0) {
-        fprintf(stderr, "--time-slice must be > 0\n");
+      if (argc != 6) {
         usage(argv[0]);
-        return -1;
+        return EXIT_USAGE;
       }
-    } else {
-      // No RR, time_slice not needed
-      cfg->time_slice = -1;
-      if (argc == 6) {
+    } else if (argc != 4) {
+      if (strcmp(argv[4], "--time-slice") == 0) {
         fprintf(stderr, "--time-slice provided but RR not selected\n");
-        usage(argv[0]);
-        return -1;
       }
+      usage(argv[0]);
+      return EXIT_USAGE;
     }
 
   } else {
@@ -159,25 +188,28 @@ int parse_args(int argc, char *argv[], sched_config_t *cfg) {
       cfg->num_policies = 1;
 
     } else if (strcmp(argv[2], "RR") == 0) {
-      if (argc != 5 || strcmp(argv[3], "--time-slice") != 0) {
+      enum exit_code rc = parse_time_slice(argc, argv, 3, &cfg->time_slice);
+      if (rc != EXIT_OK) {
         usage(argv[0]);
-        return -1;
-      }
-
-      cfg->time_slice = atoi(argv[4]);
-      if (cfg->time_slice <= 0) {
-        usage(argv[0]);
-        return -1;
+        return rc;
       }
 
       cfg->policies[0] = RR;
       cfg->num_policies = 1;
 
     } else {
+      fprintf(stderr, "Unknown policy: %s\n", argv[2]);
       usage(argv[0]);
-      return -1;
+      return EXIT_BAD_POLICY;
+    }
+
+    // Only RR takes additional arguments, i.e. --time-slice N. Any other single
+    // policy must have exactly 3 arguments, anything trailing is invalid input.
+    if (argc != (cfg->policies[0] == RR ? 5 : 3)) {
+      usage(argv[0]);
+      return EXIT_USAGE;
     }
   }
 
-  return 0;
+  return EXIT_OK;
 }
